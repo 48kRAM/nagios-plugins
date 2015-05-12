@@ -1,0 +1,139 @@
+#!/usr/bin/perl
+use Net::SNMP;
+use Switch;
+use Getopt::Long qw(:config no_ignore_case);
+use lib qw ( . /usr/lib/nagios/libexec );
+use utils qw(%ERRORS);
+
+$PROGNAME="check_ims_value";
+$MIB = 'SENSAPHONE-MIB';
+
+sub print_help () {
+    my $help = << "EOH";
+Usage: $PROGNAME -H <host address> [-P <community>] [-n <node>] -I <input> [(other options)]
+
+    -I		Input channel number to check
+    -n		Node number (Can specify 0 or omit for sensors on host)
+    -w		Warning threshold (supports Nagios range syntax)
+    -c		Critical threshold (supports Nagios range syntax)
+
+EOH
+    print ($help);
+    exit $ERRORS{'UNKNOWN'};
+}
+
+### Set some defaults
+$community="public";
+
+GetOptions(
+    "H|host=s"		=> \$ims,
+    "h|help"		=> \$helpme,
+    "n|node=i"		=> \$node,
+    "I|input=s"		=> \$input,
+    "C|community=s"	=> \$community,
+    "w|warning=s"	=> \$warn,
+    "c|critical=s"	=> \$crit,
+    "v|verbose"		=> \$debug,
+    "u|unit=s"		=> \$unit,
+    "t|type=s"		=> \$type,
+) or print_help();
+
+if (!$ims || !$input || $helpme) {
+    print_help();
+}
+if ($warnLow || $critLow) {
+    if (!defined($warnLow) or !defined($critLow)) {
+        printf("Error: When using low thresholds, both warning and critical must be supplied!\n");
+	exit $ERRORS{'UNKNOWN'};
+    }
+}
+
+# Figure out the OID for the selected interface
+$ims4000=".1.3.6.1.4.1.8338.1.1.1";
+$OIDnode=1;
+if ($node) {
+    $OIDnode+=$node;
+}
+$typeOID="$ims4000.$OIDnode.8.1.1.3.$input";
+$valueOID="$ims4000.$OIDnode.8.1.1.7.$input";
+
+printf("OID is %s\n", $valueOID) if ($debug);
+
+($s, $error) = Net::SNMP->session(
+	-hostname => $ims, -community => $community, -timeout => 10, -version => 1
+) or die ("Unable to create new SNMP session");
+if (!$s) {
+    printf("Session error: %s\n", $error);
+    exit $ERRORS{'UNKNOWN'};
+}
+### Request the sensor type and value
+$res = $s->get_request( -varbindlist => [$typeOID, $valueOID] );
+$inputValue=$res->{$valueOID};
+$inputType=$res->{$typeOID};
+printf("Sensor type is %d\n", $inputType) if ($debug);
+
+# Adapt to the sensor type
+if ($inputType==1 or $inputType==11) {
+    $unit='degrees F' unless ($unit);
+    $type='Temperature' unless ($type);
+    $perfLabel="temp";
+    $perfUnit="F";
+} elsif($inputType==2 or $inputType==12) {
+    $unit='degrees C' unless ($unit);
+    $type='Temperature' unless ($type);
+    $perfLabel="temp";
+    $perfUnit="C";
+}
+
+### Process the value
+$status="OK";
+@Warn=split(':', $warn) if (defined($warn));
+@Crit=split(':', $crit) if (defined($crit));
+if(scalar(@Warn) > 1) {
+    printf("Checking low and high warning thresholds\n") if ($debug);
+    ($warnLow, $warn)=@Warn;
+}
+if(scalar(@Crit) > 1) {
+    printf("Checking low and high critical thresholds\n") if ($debug);
+    ($critLow, $crit)=@Crit;
+}
+printf("Thresholds in use: W->%d:%d , C->%d:%d\n", $warnLow, $warn, $critLow, $crit) if ($debug);
+if($warnLow) {
+    ## Process lower warning/critical thresholds
+    if ($inputValue <= $warnLow) {
+        $status="WARNING";
+    }
+}
+if($critLow) {
+    if ($inputValue <= $critLow) {
+        $status="CRITICAL";
+    }
+}
+
+if($status eq "OK") {
+    # Value is not too low, so check the upper thresholds
+    if ($inputValue >= $warn) {
+	$status="WARNING";
+    }
+    if ($inputValue >= $crit) {
+	$status="CRITICAL";
+    }
+}
+
+$outstring="$status: ";
+if ($type) {
+    $outstring.="$type is ";
+}
+$outstring.="$inputValue";
+if ($unit) {
+    $outstring.=" $unit";
+}
+if(defined($warnLow)) {
+    $perfWarnCrit=sprintf("%d:%d;%d:%d", $warnLow, $warn, $critLow, $crit);
+} else {
+    $perfWarnCrit=sprintf("%d;%d", $warn, $crit);
+}
+$perfData=sprintf("|%s=%d%s;%s", $perfLabel, $inputValue, $perfUnit, $perfWarnCrit);
+print "$outstring$perfData\n";
+
+exit $ERRORS{$status};
