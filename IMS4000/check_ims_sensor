@@ -49,13 +49,13 @@ EOH
 $community="public";
 # The types of input sensors available
 %InputTypes = (
-    1	=> "temp",	2=> "temp",		3=> "hum",
-    4	=> "water",	5=> "extPower",
-    6=> "N.C. contact",				7=> "N.O. contact",
-    8=> "smoke",	9=> "motion",
-    10	=> "hum",	11=> "temp",		12=> "temp",
-    16	=> "none",	17=> "hostPower",	18=> "nodePower",
-    19=> "battery",	20=> "sound",		21=> "ip",
+    1=> "temp",		2=> "temp",		3=> "humidity",
+    4=> "water",	5=> "extPower",
+    6=> "N.C. contact",		7=> "N.O. contact",
+    8=> "smoke",	9=> "motion",		10=> "humidity",
+    11=> "temp",	12=> "temp", 		16=> "none",
+    17=> "hostPower",	18=> "nodePower",	19=> "battery",
+    20=> "sound",	21=> "ip",
 );
 
 GetOptions(
@@ -110,6 +110,7 @@ if(!$inLabel eq "" and !$type) {
 }
 printf("Sensor type is %d\n", $inType) if ($debug);
 printf("Sensor label is %s\n", $inLabel) if ($debug);
+printf("Raw value is %s\n", $inputValue) if ($debug);
 
 # Adapt to the sensor type
 if ($inType==1 or $inType==11) {
@@ -124,19 +125,29 @@ if ($inType==1 or $inType==11) {
     $type="Temperature" unless ($type);
     $perfLabel="temp";
     $perfUnit="C";
-} elsif($inType==5 or $inType==17 or $inType==18) {
-    # Power - internal or external
-    $unit='volts' unless ($unit);
-    $type='Power' unless ($type);
-    $perfLabel='voltage';
-    $perfUnit='v';
+} elsif($inType==3 or $inType==10) {
+    # Humidity (relative %)
+    $unit='%' unless ($unit);
+    $type="Humidity" unless ($type);
+    $perfLabel="humidity";
+    $perfUnit="%";
+} elsif($inType==17 or $inType==18) {
+    # Power - internal; 0 is normal, 1 is power out
+    $warn=$crit=1;
+    $type='Power fail' unless ($type);
+    $perfLabel='powerfail';
 } elsif($inType==20) {
     # Sound - usually via internal mic
     $unit='dB' unless ($unit);
     $type='Sound volume' unless ($type);
     $perfLabel='sound';
     $perfUnit=$unit;
-} elsif($inType=7) {
+} elsif($inType==4) {
+    # Water sensor
+    $warn=$crit=1;
+    $type=$inLabel unless ($type);
+    $perfLabel='sensor';
+} elsif($inType==7) {
     # Normally-open contact
     $warn=$crit=1;
     $type="Dry contact $inLabel";

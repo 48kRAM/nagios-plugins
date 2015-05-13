@@ -6,7 +6,9 @@ This plugin will query an input channel for type, label and value and provide sc
 
 * Temperature (C or F)
 * Sound, usually from internal mic (dB)
-* Power, internal or external sensor (v)
+* Power input (0 or 1, 0 is normal)
+* Humidity (% relative humidity)
+* Water sensor (0 or 1)
 * N.O. Dry contact (0 or 1)
 
 ### Requirements
