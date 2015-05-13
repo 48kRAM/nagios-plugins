@@ -23,7 +23,6 @@
 # THE SOFTWARE.
 
 use Net::SNMP;
-use Switch;
 use Getopt::Long qw(:config no_ignore_case);
 use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw(%ERRORS);
@@ -33,10 +32,11 @@ $MIB = 'SENSAPHONE-MIB';
 
 sub print_help () {
     my $help = << "EOH";
-Usage: $PROGNAME -H <host address> [-P <community>] [-n <node>] -I <input> [(other options)]
+Usage: $PROGNAME -H <host address> [-C <community>] [-n <node>] -I <input> [(other options)]
 
     -I		Input channel number to check
     -n		Node number (Can specify 0 or omit for sensors on host)
+    -C		SNMP community string (read is sufficient)
     -w		Warning threshold (supports Nagios range syntax)
     -c		Critical threshold (supports Nagios range syntax)
 
@@ -47,6 +47,16 @@ EOH
 
 ### Set some defaults
 $community="public";
+# The types of input sensors available
+%InputTypes = (
+    1	=> "temp",	2=> "temp",		3=> "hum",
+    4	=> "water",	5=> "extPower",
+    6=> "N.C. contact",				7=> "N.O. contact",
+    8=> "smoke",	9=> "motion",
+    10	=> "hum",	11=> "temp",		12=> "temp",
+    16	=> "none",	17=> "hostPower",	18=> "nodePower",
+    19=> "battery",	20=> "sound",		21=> "ip",
+);
 
 GetOptions(
     "H|host=s"		=> \$ims,
@@ -92,20 +102,45 @@ if (!$s) {
 ### Request the sensor type and value
 $res = $s->get_request( -varbindlist => [$typeOID, $valueOID] );
 $inputValue=$res->{$valueOID};
-$inputType=$res->{$typeOID};
-printf("Sensor type is %d\n", $inputType) if ($debug);
+$inType=$res->{$typeOID};
+printf("Sensor type is %d\n", $inType) if ($debug);
 
 # Adapt to the sensor type
-if ($inputType==1 or $inputType==11) {
+if ($inType==1 or $inType==11) {
+    # Temperature in F
     $unit='degrees F' unless ($unit);
     $type='Temperature' unless ($type);
     $perfLabel="temp";
     $perfUnit="F";
-} elsif($inputType==2 or $inputType==12) {
+} elsif($inType==2 or $inType==12) {
+    # Temperature in C
     $unit='degrees C' unless ($unit);
     $type='Temperature' unless ($type);
     $perfLabel="temp";
     $perfUnit="C";
+} elsif($inType==5 or $inType==17 or $inType==18) {
+    # Power - internal or external
+    $unit='volts' unless ($unit);
+    $type='Power' unless ($type);
+    $perfLabel='voltage';
+    $perfUnit='v';
+} elsif($inType==20) {
+    # Sound - usually via internal mic
+    $unit='dB' unless ($unit);
+    $type='Sound volume' unless ($type);
+    $perfLabel='sound';
+    $perfUnit=$unit;
+} elsif($inType=7) {
+    # Normally-open contact
+    $warn=$crit=1;
+    $type='Dry contact';
+    $perfLabel='contact';
+} elsif($inType==16) {
+    printf("Error: Input %d is not connected\n", $input);
+    exit $ERRORS{'UNKNOWN'};
+} else {
+    printf("Error: Input type %s is unsupported at this time.\n", $InputTypes{$inType} );
+    exit $ERRORS{'UNKNOWN'};
 }
 
 ### Process the value
