@@ -1,6 +1,6 @@
 # check_ims_sensor
 
-Check plugin to pull environment sensor data from a Sensaphone(tm) IMS-4000 monitoring system.
+Check plugin to pull environment sensor data from a Sensaphone(tm) IMS-4000(tm) monitoring system.
 
 This plugin will query an input channel for type, label and value and provide screen output based on the channel's configuration on the IMS-4000. Currently supported sensor types are:
 
