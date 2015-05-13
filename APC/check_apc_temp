@@ -1,0 +1,133 @@
+#!/usr/bin/perl
+#
+# Nagios plugin to check a temperature probe on an APC Smart UPS
+#
+# Copyright 2015 Joshua Malone <jmalone@nrao.edu>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+use Net::SNMP;
+use Getopt::Long qw(:config no_ignore_case);
+use lib qw ( . /usr/lib/nagios/libexec );
+use utils qw(%ERRORS);
+
+$PROGNAME='check_apc_temp';
+
+sub print_help () {
+    my $help = << "EOH";
+Usage: $PROGNAME -H <host address> [-C <community>] [(other options)]
+
+    -H		Host address ($HOSTADDRESS$ in Nagios)
+    -C          SNMP community string (read is sufficient)
+    -w          Warning threshold (supports Nagios range syntax)
+    -c          Critical threshold (supports Nagios range syntax)
+
+EOH
+    print ($help);
+    exit $ERRORS{'UNKNOWN'};
+}
+
+### Set some defaults
+$community="public";
+$perfLabel="temp";
+$probe=1;
+
+GetOptions(
+    "H|host=s"          => \$host,
+    "h|help"            => \$helpme,
+    "C|community=s"     => \$community,
+    "w|warning=s"       => \$warn,
+    "c|critical=s"      => \$crit,
+    "v|verbose"         => \$debug,
+    "p|probe=i"		=> \$probe,
+) or print_help();
+
+if (!$host || !defined($warn) || !defined($crit) || $helpme) {
+    print_help();
+}
+
+%tempSystem = ( 0 => 'F', 1 => 'C' );
+
+$powernet=".1.3.6.1.4.1.318";
+$hwOID="$powernet.1.1";
+$envMonitorOID="$hwOID.10";
+$statusOID="$envMonitorOID.2.3";
+$unitsOID="$statusOID.2.1.5.$probe";
+$valueOID="$statusOID.2.1.4.$probe";
+
+printf("Value OID is %s\n", $valueOID) if ($debug);
+
+($s, $error) = Net::SNMP->session(
+        -hostname => $host, -community => $community, -timeout => 10, -version => 1
+) or die ("Unable to create new SNMP session");
+if (!$s) {
+    printf("Session error: %s\n", $error);
+    exit $ERRORS{'UNKNOWN'};
+}
+### Request the sensor type and value
+$res = $s->get_request( -varbindlist => [$unitsOID, $valueOID] );
+$tempValue=$res->{$valueOID};
+$tempUnit=$tempSystem{$res->{$unitsOID}};
+
+printf("Probe %d temperature is %d %s\n", $probe, $tempValue, $tempUnit) if ($debug);
+
+### Process the value
+$status="OK";
+@Warn=split(':', $warn) if (defined($warn));
+@Crit=split(':', $crit) if (defined($crit));
+if(scalar(@Warn) > 1) {
+    printf("Checking low and high warning thresholds\n") if ($debug);
+    ($warnLow, $warn)=@Warn;
+}
+if(scalar(@Crit) > 1) {
+    printf("Checking low and high critical thresholds\n") if ($debug);
+    ($critLow, $crit)=@Crit;
+}
+printf("Thresholds in use: W->%d:%d , C->%d:%d\n", $warnLow, $warn, $critLow, $crit) if ($debug);
+if($warnLow) {
+    ## Process lower warning/critical thresholds
+    if ($tempValue <= $warnLow) {
+        $status="WARNING";
+    }
+}
+if($critLow) {
+    if ($tempValue <= $critLow) {
+        $status="CRITICAL";
+    }
+}
+if($status eq "OK") {
+    # Value is not too low, so check the upper thresholds
+    if ($tempValue >= $warn) {
+        $status="WARNING";
+    }
+    if ($tempValue >= $crit) {
+        $status="CRITICAL";
+    }
+}
+
+$outstring=sprintf("%s: Temperature is %d %s", $status, $tempValue, $tempUnit);
+if(defined($warnLow)) {
+    $perfWarnCrit=sprintf("%d:%d;%d:%d", $warnLow, $warn, $critLow, $crit);
+} else {
+    $perfWarnCrit=sprintf("%d;%d", $warn, $crit);
+}
+$perfData=sprintf("|%s=%d%s;%s", $perfLabel, $tempValue, $tempUnit, $perfWarnCrit);
+print "$outstring$perfData\n";
+
+exit $ERRORS{$status};
