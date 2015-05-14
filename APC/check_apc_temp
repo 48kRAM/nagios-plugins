@@ -28,6 +28,7 @@ use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw(%ERRORS);
 
 $PROGNAME='check_apc_temp';
+$VERSION=2;
 
 sub print_help () {
     my $help = << "EOH";
@@ -56,10 +57,15 @@ GetOptions(
     "c|critical=s"      => \$crit,
     "v|verbose"         => \$debug,
     "p|probe=i"		=> \$probe,
+    "V|version"		=> \$doVersion,
 ) or print_help();
 
 if (!$host || !defined($warn) || !defined($crit) || $helpme) {
     print_help();
+}
+if ($doVersion) {
+    printf("%s by Josh Malone (jmalone at nrao.edu) version %d\n", $PROGNAME, $VERSION);
+    exit $ERRORS{'UNKNOWN'};
 }
 
 %tempSystem = ( 0 => 'F', 1 => 'C' );
@@ -74,14 +80,18 @@ $valueOID="$statusOID.2.1.4.$probe";
 printf("Value OID is %s\n", $valueOID) if ($debug);
 
 ($s, $error) = Net::SNMP->session(
-        -hostname => $host, -community => $community, -timeout => 10, -version => 1
+        -hostname => $host, -community => $community, -timeout => 5, -version => 1
 ) or die ("Unable to create new SNMP session");
-if (!$s) {
+if ($error) {
     printf("Session error: %s\n", $error);
     exit $ERRORS{'UNKNOWN'};
 }
 ### Request the sensor type and value
 $res = $s->get_request( -varbindlist => [$unitsOID, $valueOID] );
+if(!defined($res)) {
+    printf("CRITICAL: SNMP error: %s\n", $s->error);
+    exit $ERRORS{'CRITICAL'};
+}
 $tempValue=$res->{$valueOID};
 $tempUnit=$tempSystem{$res->{$unitsOID}};
 
