@@ -38,6 +38,7 @@ This plugin should run on most typical perl installations that provide:
     -v, --verbose       Verbose/debugging output
     -u, --unit          Override value unit string
     -t, --type          Override input type string
+    --list-sensors	List available sensors on the selected node
 
 Both the warning and critical thresholds support Nagios range syntax for high and low thresholds. The string overrides are only used in the screen output of the Nagios plugin. The performance data automatically uses the input channel's proper unit and type; this prevents RRD series from changing if you change a channel label in IMS.
 
