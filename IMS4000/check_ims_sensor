@@ -21,6 +21,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
+#
 
 use Net::SNMP;
 use Getopt::Long qw(:config no_ignore_case);
@@ -28,6 +29,7 @@ use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw(%ERRORS);
 
 $PROGNAME="check_ims_value";
+$VERSION=3;
 $MIB = 'SENSAPHONE-MIB';
 
 sub print_help () {
@@ -69,6 +71,7 @@ GetOptions(
     "v|verbose"		=> \$debug,
     "u|unit=s"		=> \$unit,
     "t|type=s"		=> \$type,
+    "V|version"		=> \$doVersion,
 ) or print_help();
 
 if (!$ims || !$input || $helpme) {
@@ -90,6 +93,8 @@ if ($node) {
 $typeOID="$ims4000.$OIDnode.8.1.1.3.$input";
 $valueOID="$ims4000.$OIDnode.8.1.1.7.$input";
 $labelOID="$ims4000.$OIDnode.8.1.1.2.$input";
+$highLimOID="$ims4000.$OIDnode.8.1.1.14.$input";
+$lowLimOID="$ims4000.$OIDnode.8.1.1.13.$input";
 
 printf("OID is %s\n", $valueOID) if ($debug);
 
@@ -101,16 +106,31 @@ if (!$s) {
     exit $ERRORS{'UNKNOWN'};
 }
 ### Request the sensor type and value
-$res = $s->get_request( -varbindlist => [$typeOID, $valueOID, $labelOID] );
+$res = $s->get_request(
+    -varbindlist => [$typeOID, $valueOID, $labelOID, $highLimOID, $lowLimOID ],
+);
+if(!defined($res)) {
+    printf("CRITICAL: SNMP error: %s\n", $s->error);
+    exit $ERRORS{'CRITICAL'};
+}
 $inputValue=$res->{$valueOID};
 $inType=$res->{$typeOID};
 $inLabel=$res->{$labelOID};
+$imsLowAlarm=$res->{$lowLimOID};
+$imsHighAlarm=$res->{$highLimOID};
 if(!$inLabel eq "" and !$type) {
     $type=$inLabel;
 }
 printf("Sensor type is %d\n", $inType) if ($debug);
 printf("Sensor label is %s\n", $inLabel) if ($debug);
 printf("Raw value is %s\n", $inputValue) if ($debug);
+printf("IMS config thresholds: %d-%d\n", $imsLowAlarm, $imsHighAlarm) if ($debug);
+
+# Use alarm range configured in IMS if no thresholds supplied in arguments
+if(!$crit) {
+    $crit=$imsHighAlarm;
+    $critLow=$imsLowAlarm;
+}
 
 # Adapt to the sensor type
 if ($inType==1 or $inType==11) {
@@ -187,7 +207,7 @@ if($critLow) {
 
 if($status eq "OK") {
     # Value is not too low, so check the upper thresholds
-    if ($inputValue >= $warn) {
+    if ($warn and $inputValue >= $warn) {
 	$status="WARNING";
     }
     if ($inputValue >= $crit) {
@@ -203,7 +223,7 @@ $outstring.="$inputValue";
 if ($unit) {
     $outstring.=" $unit";
 }
-if(defined($warnLow)) {
+if(defined($critLow)) {
     $perfWarnCrit=sprintf("%d:%d;%d:%d", $warnLow, $warn, $critLow, $crit);
 } else {
     $perfWarnCrit=sprintf("%d;%d", $warn, $crit);
