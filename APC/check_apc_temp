@@ -32,12 +32,13 @@ $VERSION=2;
 
 sub print_help () {
     my $help = << "EOH";
-Usage: $PROGNAME -H <host address> [-C <community>] [(other options)]
+Usage: $PROGNAME -H <host address> [-C <community>] [-s F|C] [(other options)]
 
-    -H		Host address ($HOSTADDRESS$ in Nagios)
+    -H		Host address (\$HOSTADDRESS\$ in Nagios)
     -C          SNMP community string (read is sufficient)
     -w          Warning threshold (supports Nagios range syntax)
     -c          Critical threshold (supports Nagios range syntax)
+    -s		Force output temperature system (F or C)
 
 EOH
     print ($help);
@@ -57,6 +58,7 @@ GetOptions(
     "c|critical=s"      => \$crit,
     "v|verbose"         => \$debug,
     "p|probe=i"		=> \$probe,
+    "s|system=s"	=> \$system,
     "V|version"		=> \$doVersion,
 ) or print_help();
 
@@ -96,6 +98,28 @@ $tempValue=$res->{$valueOID};
 $tempUnit=$tempSystem{$res->{$unitsOID}};
 
 printf("Probe %d temperature is %d %s\n", $probe, $tempValue, $tempUnit) if ($debug);
+
+### Convert to desired temperature system
+if ($system) {
+    if ($tempUnit ne $system) {
+	print("Converting temperature system ") if ($debug);
+    	if ($system eq 'F') {
+	    # Convert to F
+	    printf("to Farenheit\n") if ($debug);
+	    $tempValue=$tempValue * 9 / 5 + 32;
+	    $tempUnit='F';
+	} elsif ($system eq 'C') {
+	    # Convert to C
+	    printf("to Celsius\n") if ($debug);
+	    $tempValue=($tempValue-32) * 5 / 9;
+	    $tempUnit='C';
+	} else {
+	    # No other systems supported
+	    printf("Error - invalid temperature system specified!\n");
+	    exit $ERRORS{'UNKNOWN'};
+	}
+    }
+}
 
 ### Process the value
 $status="OK";

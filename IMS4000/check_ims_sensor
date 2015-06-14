@@ -40,6 +40,7 @@ Usage: $PROGNAME -H <host address> [-C <community>] [-n <node>] -I <input> [(oth
     -C		SNMP community string (read is sufficient)
     -w		Warning threshold (supports Nagios range syntax)
     -c		Critical threshold (supports Nagios range syntax)
+    -s		Force output temperature system (F or C)
 
     --list-sensors	List available sensors on selected node
 
@@ -71,6 +72,7 @@ GetOptions(
     "c|critical=s"	=> \$crit,
     "v|verbose"		=> \$debug,
     "u|unit=s"		=> \$unit,
+    "s|system=s"	=> \$system,
     "t|type=s"		=> \$type,
     "V|version"		=> \$doVersion,
     "list-sensors"	=> \$doList,
@@ -206,6 +208,31 @@ if ($inType==1 or $inType==11) {
 } else {
     printf("Error: Input type %s is unsupported at this time.\n", $InputTypes{$inType} );
     exit $ERRORS{'UNKNOWN'};
+}
+
+### Convert to desired temperature system
+if ($system && ($unit =~ /degrees/) ) {
+    if ($perfUnit ne $system) {
+    	use Math::Round;
+        print("Converting temperature system ") if ($debug);
+        if ($system eq 'F') {
+            # Convert to F
+            printf("to Farenheit\n") if ($debug);
+            $inputValue=round($inputValue * 9 / 5 + 32);
+            $perfUnit='F';
+	    $unit='degrees F';
+        } elsif ($system eq 'C') {
+            # Convert to C
+            printf("to Celsius\n") if ($debug);
+            $inputValue=round( ($inputValue-32) * 5 / 9 );
+            $perfUnit='C';
+	    $unit='degrees C';
+        } else {
+            # No other systems supported
+            printf("Error - invalid temperature system specified!\n");
+            exit $ERRORS{'UNKNOWN'};
+        }
+    }
 }
 
 ### Process the value
