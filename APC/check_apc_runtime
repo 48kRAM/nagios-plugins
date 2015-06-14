@@ -36,7 +36,7 @@ Usage: $PROGNAME -H <host address> [-C <community>] [(other options)]
 
 Checks estimated runtime on an APC networked UPS
 
-    -H		Host address ($HOSTADDRESS$ in Nagios)
+    -H		Host address (\$HOSTADDRESS\$ in Nagios)
     -C          SNMP community string (read is sufficient)
     -w          Warning threshold (supports Nagios range syntax)
     -c          Critical threshold (supports Nagios range syntax)
