@@ -29,7 +29,7 @@ use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw(%ERRORS);
 
 $PROGNAME="check_ims_sensor";
-$VERSION=5;
+$VERSION=6;
 
 sub print_help () {
     my $help = << "EOH";
@@ -40,7 +40,10 @@ Usage: $PROGNAME -H <host address> [-C <community>] [-n <node>] -I <input> [(oth
     -C		SNMP community string (read is sufficient)
     -w		Warning threshold (supports Nagios range syntax)
     -c		Critical threshold (supports Nagios range syntax)
-    -s		Force output temperature system (F or C)
+    -s		Force output to temperature system (F or C)
+    -v		Verbose/debugging output
+    -u		Override value unit string
+    -t		Override input type string
 
     --list-sensors	List available sensors on selected node
 
