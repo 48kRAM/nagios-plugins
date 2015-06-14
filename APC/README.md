@@ -28,6 +28,7 @@ This plugin should run on most typical perl installations that provide:
     -C, --community     SNMP community string (defaults to 'public')
     -p, --probe         Probe number (defaults to 1)
     -v, --verbose       Verbose/debugging output
+    -s, --system        Force output to temperature system (F or C)
 
 Both the warning and critical thresholds support Nagios range syntax for high and low thresholds. The performance data automatically uses the proper temperature system.
 

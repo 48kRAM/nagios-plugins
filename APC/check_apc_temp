@@ -28,7 +28,7 @@ use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw(%ERRORS);
 
 $PROGNAME='check_apc_temp';
-$VERSION=2;
+$VERSION=3;
 
 sub print_help () {
     my $help = << "EOH";
@@ -62,12 +62,12 @@ GetOptions(
     "V|version"		=> \$doVersion,
 ) or print_help();
 
-if (!$host || !defined($warn) || !defined($crit) || $helpme) {
-    print_help();
-}
 if ($doVersion) {
     printf("%s by Josh Malone (jmalone at nrao.edu) version %d\n", $PROGNAME, $VERSION);
     exit $ERRORS{'UNKNOWN'};
+}
+if (!$host || !defined($warn) || !defined($crit) || $helpme) {
+    print_help();
 }
 
 %tempSystem = ( 0 => 'F', 1 => 'C' );
