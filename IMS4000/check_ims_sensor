@@ -64,6 +64,7 @@ $community="public";
     17=> "hostPower",	18=> "nodePower",	19=> "battery",
     20=> "sound",	21=> "ip",
 );
+$timeout=3;	# SNMP timeout, in seconds
 
 GetOptions(
     "H|host=s"		=> \$ims,
@@ -94,6 +95,8 @@ if ($warnLow || $critLow) {
 	exit $ERRORS{'UNKNOWN'};
     }
 }
+# For verifying SNMP connectivity
+$OIDuptime='.1.3.6.1.2.1.1.3.0';
 
 # Figure out the OID for the selected interface
 $ims4000=".1.3.6.1.4.1.8338.1.1.1";
@@ -110,12 +113,21 @@ $lowLimOID="$ims4000.$OIDnode.8.1.1.13.$input";
 printf("OID is %s\n", $valueOID) if ($debug);
 
 ($s, $error) = Net::SNMP->session(
-	-hostname => $ims, -community => $community, -timeout => 5, -version => 1
+	-hostname => $ims, -community => $community, -timeout => $timeout,
+	-version => 1
 ) or die ("Unable to create new SNMP session");
 if (!$s) {
     printf("Session error: %s\n", $error);
     exit $ERRORS{'UNKNOWN'};
 }
+# Check for SNMP response from the host
+$res = $s->get_request( -varbindlist => [$OIDuptime] );
+if(!defined($res)) {
+    printf("Unable to query host via SNMP:\n%s\nCheck that SNMP is enabled on the host.\n",
+	$s->error);
+    exit $ERRORS{'CRITICAL'};
+}
+
 if($doList or !$input) {
     ### List available sensors
     printf("Available sensors:\n");
@@ -125,6 +137,11 @@ if($doList or !$input) {
 	$res = $s->get_request(
 	    -varbindlist => [ $listType, $listLabel ],
 	);
+	if(!defined($res)) {
+	    printf("Error retrieving sensor data:\n%s\nAre you querying the IMS *host*?\n",
+	    	$s->error);
+	    exit $ERRORS{'UNKNOWN'};
+	}
 	my $type=$res->{$listType};
 	if($type==16) {
 	    printf("  Ch %d: Not connected\n", $i);
