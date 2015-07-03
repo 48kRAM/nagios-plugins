@@ -19,3 +19,7 @@ The Sensaphone IMS-4000 is a standalone environment monitoring server. While the
 ### APC/check_apc_temp
 
 Checks integrated temperature probe on an APC networked Smart UPS or Symmetra (and possibly others). Auto-detects temperature system.
+
+### APC/check_apc_runtime
+
+Checks estimated runtime on an APC networked Smart UPS, Symmetra, etc. Runtime is reported in minutes. Provides perfdata for graphing.
