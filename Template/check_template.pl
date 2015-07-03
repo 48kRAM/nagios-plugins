@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 # nagios: -epn
 #
 # Perl template for a Nagios check plugin.
@@ -86,8 +86,9 @@ $status='OK';
 # You can also define some default thresholds if there are logical defaults
 # for you application (disk usage at 90%, room temperature above 75F, etc.)
 # These will be overridden by values on the command line (parsed below).
-#$warn = '80';
-#$crit = '90';
+#
+# $warn = '80';
+# $crit = '90';
 
 # Series label for performance data output. Should reflect what is being
 # measured in the perfdata as it will be shown in the graphs
@@ -95,7 +96,7 @@ $perfLabel='label';
 $perfUnit='suffix';
 
 GetOptions(
-    "H|host=s"		=> \$ims,
+    "H|host=s"		=> \$hostaddress,
     "h|help"		=> \$helpMe,
     "w|warning=s"	=> \$warn,
     "c|critical=s"	=> \$crit,
@@ -144,28 +145,47 @@ Your check logic should set the following variables:
   $info = Additional info about the state of the service - used
           in the Screen output
 
-You *MUST* also remove the =pod and =cut lines so that Perl actually
-runs the code for your service check.
+You *MUST* place your code outside the =pod and =cut lines so that
+Perl actually runs the code for your service check.
 
 =cut
 
-##########  End of your plugin logic  ###########
+# The $status variable should get set to a proper Nagios status code:
+#   'OK', 'WARNING', 'CRITICAL' or 'UNKNOWN'
+$status="UNKNOWN";
+
+# The $info variable should report a short human readable summary
+$info="This is just a plugin template and does no actual checks";
+
+# The $perfValue variable can be set to some metric to be reported as
+# performance data (perfdata). If your plugin has no metrics to be
+# reported, leave $perfValue undefined
+#
+# $perfValue=42;
+
+#############  End of your plugin logic  ##############
 
 # The Screen output should always begin with the readable status value
 # ('OK', 'WARNING', 'CRITICAL' or 'UNKNOWN')
 $outstring="$status: $info";
 
-# Compile the performance data. If threshold ranges are in use, format
-# the thresholds in perfdata range format as well.
-if(defined($critLow)) {
-    $perfWarnCrit=sprintf("%d:%d;%d:%d", $warnLow, $warn, $critLow, $crit);
-} else {
-    $perfWarnCrit=sprintf("%d;%d", $warn, $crit);
+if(defined($perfValue)) {
+    # Compile the performance data. If threshold ranges are in use, format
+    # the thresholds in perfdata range format as well.
+    if(defined($critLow)) {
+	$perfWarnCrit=sprintf("%d:%d;%d:%d", $warnLow, $warn, $critLow, $crit);
+    } else {
+	$perfWarnCrit=sprintf("%d;%d", $warn, $crit);
+    }
+    $perfData=sprintf("|%s=%d%s;%s", $perfLabel, $perfValue, $perfUnit, $perfWarnCrit);
 }
-$perfData=sprintf("|%s=%d%s;%s", $perfLabel, $perfValue, $perfUnit, $perfWarnCrit);
 
-# Concatenate the Screen Ouput and perfdata to stdout so that Nagios can grab it.
-print "$outstring$perfData\n";
+if(defined($perfValue)) {
+    # Concatenate the Screen Ouput and perfdata to stdout so that Nagios can grab it.
+    print "$outstring$perfData\n";
+} else {
+    print "$outstring\n";
+}
 
 # Exit with the status exit code appropriate to the textual status.
 exit $ERRORS{$status};
