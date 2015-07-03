@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# nagios: -epn
 #
 # Perl template for a Nagios check plugin.
 #
