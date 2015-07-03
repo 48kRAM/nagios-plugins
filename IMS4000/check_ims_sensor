@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 # nagios: -epn
 #
 # Nagios plugin to check sensor data on a Sensaphone IMS-4000
@@ -30,7 +30,7 @@ use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw(%ERRORS);
 
 $PROGNAME="check_ims_sensor";
-$VERSION=7;
+$VERSION=8;
 
 sub print_help () {
     my $help = << "EOH";
@@ -54,7 +54,13 @@ EOH
 }
 
 ### Set some defaults
+# Usual default read-only community string
 $community="public";
+# IMS4000 MIB prefix
+$ims4000=".1.3.6.1.4.1.8338.1.1.1";
+# For verifying SNMP connectivity
+$OIDuptime='.1.3.6.1.2.1.1.3.0';
+
 # The types of input sensors available
 %InputTypes = (
     1=> "temp",		2=> "temp",		3=> "humidity",
@@ -65,8 +71,13 @@ $community="public";
     17=> "hostPower",	18=> "nodePower",	19=> "battery",
     20=> "sound",	21=> "ip",
 );
-$timeout=3;	# SNMP timeout, in seconds
+# SNMP timeout, in seconds
+$timeout=5;
 
+# Default to node 1, meaning the host itself
+$OIDnode=1;
+
+### Read command line options and override defaults if passed
 GetOptions(
     "H|host=s"		=> \$ims,
     "h|help"		=> \$helpme,
@@ -90,38 +101,23 @@ if ($doVersion) {
     printf("%s by Josh Malone (jmalone at nrao.edu) version %d\n", $PROGNAME, $VERSION);
     exit $ERRORS{'UNKNOWN'};
 }
-if ($warnLow || $critLow) {
+if (defined($warnLow) || defined($critLow)) {
     if (!defined($warnLow) or !defined($critLow)) {
         printf("Error: When using low thresholds, both warning and critical must be supplied!\n");
 	exit $ERRORS{'UNKNOWN'};
     }
 }
-# For verifying SNMP connectivity
-$OIDuptime='.1.3.6.1.2.1.1.3.0';
-
-# Figure out the OID for the selected interface
-$ims4000=".1.3.6.1.4.1.8338.1.1.1";
-$OIDnode=1;
-if ($node) {
-    $OIDnode+=$node;
-}
-$typeOID="$ims4000.$OIDnode.8.1.1.3.$input";
-$valueOID="$ims4000.$OIDnode.8.1.1.7.$input";
-$labelOID="$ims4000.$OIDnode.8.1.1.2.$input";
-$highLimOID="$ims4000.$OIDnode.8.1.1.14.$input";
-$lowLimOID="$ims4000.$OIDnode.8.1.1.13.$input";
-
-printf("OID is %s\n", $valueOID) if ($debug);
 
 ($s, $error) = Net::SNMP->session(
 	-hostname => $ims, -community => $community, -timeout => $timeout,
 	-version => 1
-) or die ("Unable to create new SNMP session");
+    ) or die ("Unable to create new SNMP session");
 if (!$s) {
     printf("Session error: %s\n", $error);
     exit $ERRORS{'UNKNOWN'};
 }
-# Check for SNMP response from the host
+
+### Check that the host is responding to SNMP
 $res = $s->get_request( -varbindlist => [$OIDuptime] );
 if(!defined($res)) {
     printf("Unable to query host via SNMP:\n%s\nCheck that SNMP is enabled on the host.\n",
@@ -129,12 +125,18 @@ if(!defined($res)) {
     exit $ERRORS{'CRITICAL'};
 }
 
-if($doList or !$input) {
-    ### List available sensors
+### Figure out the OID offset for the chosen node
+if ($node) {
+    $OIDnode+=$node;
+}
+
+### List available sensors if requested
+if($doList) {
     printf("Available sensors:\n");
     for ($i=1; $i<12; $i++) {
 	my $listType="$ims4000.$OIDnode.8.1.1.3.$i";
 	my $listLabel="$ims4000.$OIDnode.8.1.1.2.$i";
+	printf("Sensor type OID is %s\n", $listType) if ($debug && $i==1);
 	$res = $s->get_request(
 	    -varbindlist => [ $listType, $listLabel ],
 	);
@@ -147,20 +149,33 @@ if($doList or !$input) {
 	if($type==16) {
 	    printf("  Ch %d: Not connected\n", $i);
 	} else {
-	    printf("  Ch %d: Type %s (%d), Name: %s\n", $i, $InputTypes{$res->{$listType}},
-		$res->{$listType}, $res->{$listLabel} );
+	    if ($debug) {
+		printf("  Ch %d: Type %s (%d), Name: %s\n", $i,
+		    $InputTypes{$res->{$listType}}, $res->{$listType}, $res->{$listLabel} );
+	    } else {
+		printf("  Ch %d: Type %s, Name: %s\n", $i,
+		    $InputTypes{$res->{$listType}}, $res->{$listLabel} );
+	    }
 	}
     }
     printf("\n");
-    print_help();
+    exit $ERRORS{'UNKNOWN'};
 }
 if(!$input) { print_help(); }
 
-### Request the sensor type and value
+### Define OIDs for the rest of the interesting values
+$typeOID="$ims4000.$OIDnode.8.1.1.3.$input";
+$valueOID="$ims4000.$OIDnode.8.1.1.7.$input";
+$labelOID="$ims4000.$OIDnode.8.1.1.2.$input";
+$highLimOID="$ims4000.$OIDnode.8.1.1.14.$input";
+$lowLimOID="$ims4000.$OIDnode.8.1.1.13.$input";
+printf("Sensor value OID is %s\n", $valueOID) if ($debug);
+
+### Query the IMS for the sensor type and current value
 $res = $s->get_request(
     -varbindlist => [$typeOID, $valueOID, $labelOID, $highLimOID, $lowLimOID ],
 );
-if(!defined($res)) {
+if(!$res) {
     printf("CRITICAL: SNMP error: %s\n", $s->error);
     exit $ERRORS{'CRITICAL'};
 }
@@ -175,10 +190,11 @@ if(!$inLabel eq "" and !$type) {
 printf("Sensor type is %d\n", $inType) if ($debug);
 printf("Sensor label is %s\n", $inLabel) if ($debug);
 printf("Raw value is %s\n", $inputValue) if ($debug);
-printf("IMS config thresholds: %d-%d\n", $imsLowAlarm, $imsHighAlarm) if ($debug);
+printf("IMS config thresholds: %d:%d\n", $imsLowAlarm, $imsHighAlarm) if ($debug);
 
 # Use alarm range configured in IMS if no thresholds supplied in arguments
-if(!$crit) {
+if(!defined($crit)) {
+    printf("Using IMS-configured critical thresholds\n") if ($debug);
     $crit=$imsHighAlarm;
     $critLow=$imsLowAlarm;
 }
@@ -190,12 +206,16 @@ if ($inType==1 or $inType==11) {
     $type="Temperature" unless ($type);
     $perfLabel="temp";
     $perfUnit="F";
+    $warn //= 80;
+    $crit //= 90;
 } elsif($inType==2 or $inType==12) {
     # Temperature in C
     $unit='degrees C' unless ($unit);
     $type="Temperature" unless ($type);
     $perfLabel="temp";
     $perfUnit="C";
+    $warn //= 27;
+    $crit //= 33;
 } elsif($inType==3 or $inType==10) {
     # Humidity (relative %)
     $unit='%' unless ($unit);
@@ -213,6 +233,9 @@ if ($inType==1 or $inType==11) {
     $type='Sound volume' unless ($type);
     $perfLabel='sound';
     $perfUnit=$unit;
+    # Default thresholds, in dB
+    $warn //= 85;  # unsafe after 8 hrs w/o hearing protection
+    $crit //= 94;  # unsafe after 1 hr w/o hearing protection
 } elsif($inType==4) {
     # Water sensor
     $warn=$crit=1;
@@ -223,6 +246,7 @@ if ($inType==1 or $inType==11) {
     $warn=$crit=1;
     $type="Dry contact $inLabel";
     $perfLabel='contact';
+    $perfUnit='';
 } elsif($inType==16) {
     printf("Error: Input %d is not connected\n", $input);
     exit $ERRORS{'UNKNOWN'};
@@ -231,7 +255,7 @@ if ($inType==1 or $inType==11) {
     exit $ERRORS{'UNKNOWN'};
 }
 
-### Convert to desired temperature system
+### Convert temps to desired temperature system
 if ($system && ($unit =~ /degrees/) ) {
     if ($perfUnit ne $system) {
     	use Math::Round;
@@ -258,6 +282,8 @@ if ($system && ($unit =~ /degrees/) ) {
 
 ### Process the value
 $status="OK";
+$warnLow=0;
+$critLow=0;
 @Warn=split(':', $warn) if (defined($warn));
 @Crit=split(':', $crit) if (defined($crit));
 if(scalar(@Warn) > 1) {
@@ -270,7 +296,7 @@ if(scalar(@Crit) > 1) {
 }
 printf("Thresholds in use: W->%d:%d , C->%d:%d\n", $warnLow, $warn, $critLow, $crit) if ($debug);
 if($warnLow) {
-    ## Process lower warning/critical thresholds
+    # Process lower warning/critical thresholds
     if ($inputValue <= $warnLow) {
         $status="WARNING";
     }
