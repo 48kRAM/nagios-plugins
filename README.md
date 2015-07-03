@@ -3,6 +3,13 @@ Plugins for Nagios monitoring framework (and compatibles)
 
 This is my collection of check plug-ins written for the Nagios monitoring package. (www.nagios.org). They should work with Nagios-compatible moitoring software as well (Icinga, Shinken, Naemon, etc.) but I have not and probably will not test against anything but Nagios 4.x.
 
+## Requirements
+
+These plugins should run on most Linux or Mac OSX systems that provide at least:
+* perl 5.10
+* utils.pm (from Nagios package)
+* Net::SNMP perl module
+
 ## Plugins
 
 ### IMS4000/check_ims_sensor
