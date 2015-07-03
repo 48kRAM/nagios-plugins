@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# nagios: -epn
 #
 # Nagios plugin to check sensor data on a Sensaphone IMS-4000
 #
@@ -29,7 +30,7 @@ use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw(%ERRORS);
 
 $PROGNAME="check_ims_sensor";
-$VERSION=6;
+$VERSION=7;
 
 sub print_help () {
     my $help = << "EOH";

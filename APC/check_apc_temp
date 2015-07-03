@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# nagios: -epn
 #
 # Nagios plugin to check a temperature probe on an APC Smart UPS
 #
@@ -28,7 +29,7 @@ use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw(%ERRORS);
 
 $PROGNAME='check_apc_temp';
-$VERSION=3;
+$VERSION=4;
 
 sub print_help () {
     my $help = << "EOH";
