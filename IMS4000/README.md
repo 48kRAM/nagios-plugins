@@ -1,4 +1,4 @@
-# check_ims_sensor
+# check\_ims_sensor
 
 Check plugin to pull environment sensor data from a Sensaphone(tm) IMS-4000(tm) monitoring system.
 
@@ -16,8 +16,10 @@ This plugin will query an input channel for type, label and value and provide sc
 This plugin should run on most typical perl installations that provide:
 
 * perl 5.8 or higher
-* Net::SNMP
-* Getopt::Long
+* Some perl modules
+  * Net::SNMP
+  * Math::Round
+  * Getopt::Long
 * utils.pm from Nagios package
 
 ### Usage
