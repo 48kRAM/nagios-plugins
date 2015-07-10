@@ -31,7 +31,7 @@
 
 # These lines include the Nagios-provided exit code perl module.
 # You may need to adjust the location of your included lib directory.
-use lib qw ( . /usr/lib/nagios/libexec );
+use lib qw ( . /usr/lib/nagios/libexec /usr/lib/nagios/plugins );
 use utils qw(%ERRORS);
 
 # Uncomment this line to use the Net::SNMP library

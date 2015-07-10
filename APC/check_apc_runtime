@@ -25,7 +25,7 @@
 
 use Net::SNMP qw (ticks_to_time);
 use Getopt::Long qw(:config no_ignore_case);
-use lib qw ( . /usr/lib/nagios/libexec );
+use lib qw ( . /usr/lib/nagios/libexec /usr/lib/nagios/plugins );
 use utils qw(%ERRORS);
 
 $PROGNAME='check_apc_runtime';
