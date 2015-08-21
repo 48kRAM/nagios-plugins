@@ -1,0 +1,137 @@
+#!/usr/bin/perl
+#
+# Check the status of a MySQL replication slave
+#
+# Copyright 2015 Joshua Malone <jmalone@nrao.edu>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
+# These lines include the Nagios-provided exit code perl module.
+# You may need to adjust the location of your included lib directory.
+use lib qw ( . /usr/lib/nagios/libexec );
+use utils qw($TIMEOUT %ERRORS);
+
+use Getopt::Long qw(:config no_ignore_case);
+
+$PROGNAME="check_mysql_rep";
+$VERSION=4;
+$AUTHOR_NAME='Josh Malone',
+$AUTHOR_INFO='https://github.com/48kRAM/nagios-plugins';
+
+### Set some defaults
+$state=$ERRORS{'OK'};
+$outstr="OK: No replication errors";
+
+# Default delay thresholds
+$warnsecs=10;
+$critsecs=120;
+
+sub printusage {
+    my $helptext = << "EOH";
+Usage: check_mysql_rep -H <host> -u <mysql user> -p <password> [options]
+
+Options:
+
+    -u | --user		MySQL username
+    -p | --password	MySQL password
+
+ (Options for Seconds Behind Master)
+
+    -w | --warning	Warning threshold (seconds)
+    -c | --critical	Critical threshold (seconds)
+EOH
+    print($helptext);
+    exit $ERRORS{'UNKNOWN'};
+}
+
+################################################
+
+GetOptions(
+    "h|help"		=> \$opt_h,
+    "H|host=s"		=> \$hostname,
+    "u|user=s"		=> \$opt_u,
+    "p|password=s"	=> \$opt_p,
+    "w|warning=i"	=> \$warnsecs,
+    "c|critical=i"	=> \$critsecs,
+    "d|debug"		=> \$debug,
+    "v|version"		=> \$doVersion,
+);
+
+# Time out the check in Nagios's default timeout setting
+alarm $TIMEOUT;
+$SIG{ALRM} = sub {
+    print "CRITICAL: Check plugin timed out!\n";
+    exit $ERRORS{'CRITICAL'};
+};
+
+if ($doVersion) {
+    printf("%s by %s (%s) version %d\n", $PROGNAME, $AUTHOR_NAME, $AUTHOR_INFO, $VERSION);
+    exit $ERRORS{'UNKNOWN'};
+}
+if ($opt_h) {
+    printusage();
+}
+if (! $hostname or ! $opt_u or ! $opt_p ) {
+    printusage();
+    exit $ERRORS{'UNKNOWN'};
+}
+
+if (! open (SQL, "/usr/bin/mysql -h $hostname -u $opt_u --password='$opt_p' -e 'SHOW SLAVE STATUS\\G' |")) {
+    printf("CRITICAL: Unable to connect to mysql server $hostname\n");
+    exit $ERRORS{'UNKNOWN'};
+}
+while (<SQL>) {
+    chomp();
+    if (/Last_Errno/) {
+	next if ($state>0);
+	($foo, $numerrs)=split(/:/);
+	$numerrs=~s/^\s+|\s+$//g;
+	if ($numerrs>0) {
+	    $outstr="CRITICAL: $numerrs replication errors";
+	    $state=$ERRORS{'CRITICAL'};
+	} elsif ($numerrs==0) {
+	    $outstr="OK: No replication errors";
+	    $state=$ERRORS{'OK'};
+	}
+    }
+    if (/Seconds_Behind_Master/) {
+    	($foo, $secs)=split(/:/);
+	$secs=~s/^\s+|\s+$//g;
+	if ($secs=~/^[0-9]+/) {
+	    if ($secs > $critsecs) {
+		$outstr="CRITICAL: Slave is $secs seconds behind master";
+	    	$state=$ERRORS{'CRITICAL'};
+	    } elsif ($secs > $warnsecs) {
+		$outstr="CRITICAL: Slave is $secs seconds behind master";
+	    	$state=$ERRORS{'WARNING'};
+	    }
+	} else {
+	    $outstr.=" Unable to read seconds behind master";
+	}
+    }
+}
+
+# Add performance data
+if ($secs=~/[0-9]*/) {
+    $outstr.=" |delay=".$secs."s";
+}
+
+print $outstr."\n";
+exit $state;
