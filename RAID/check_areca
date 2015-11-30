@@ -43,7 +43,7 @@ $PROGNAME="check_areca";
 # Enter the version number of your plugin here. Remember to
 # increment this version each time your release or commit it.
 # You can use integers or real numbers (x.y) as you please.
-$VERSION=1;
+$VERSION=2;
 
 # Your name - used in version output
 $AUTHOR_NAME='Josh Malone';
@@ -60,9 +60,10 @@ $AUTHOR_INFO='jmalone@nrao.edu';
 # that you use in your plugin to this output.
 sub print_help () {
     my $help = << "EOH";
-Usage: $PROGNAME -H <host address> -w <warning> -c <critical> [-vV]
+Usage: $PROGNAME [options]
 
     -C, --cli-path	Full path to the Areca cli
+    --check-disks	Perform deep check of disk status (longer run-time)
     -v, --verbose	Print verbose debugging output
     -V, --version	Print the plugin version and exit
     -h, --help		Print this help text
@@ -94,6 +95,7 @@ $perfUnit='suffix';
 
 GetOptions(
     "C|cli-path"	=> \$clipath,
+    "check-disks"	=> \$checkDisks,
     "w|warning=s"	=> \$warn,
     "c|critical=s"	=> \$crit,
     "v|verbose"		=> \$debug,
@@ -152,12 +154,19 @@ Perl actually runs the code for your service check.
 $status="OK";
 $info="";
 
+# Set alarm to time out possibly hung Areca cli command
+# alarm 40;
+$SIG{ALRM} = sub {
+    print "UNKNOWN: Plugin timed out - possibly a hung Areca cli command\n";
+    exit $ERRORS{'UNKNOWN'};
+};
+
 # Check RAID sets
 open (RSF, "$clipath rsf info |") or die ("Can't open areca CLI");
 while ($rsfline=<RSF>) {
     if ($rsfline=~m/^ \d/) {
     	# RAID set line
-	my @rsfstat=split(/\s+/,$rsfline);
+	my @rsfstat=split(/\s+/, $rsfline);
 	printf(" Detected Raid set %s (%d disks)\n", $rsfstat[2], $rsfstat[3] ) if ($debug);
 	if( lc $rsfstat[7] ne "normal") {
 	    $status="CRITICAL";
@@ -167,18 +176,39 @@ while ($rsfline=<RSF>) {
 }
 close(RSF);
 # Check Volume sets
-open (VSF, "$clipath vsf info |") or die ("Can't open areca CLI");
+open (VSF, "$clipath vsf info |") or die ("Can't open Areca CLI");
 while ($vsfline=<VSF>) {
     if($vsfline=~m/^ *\d/) {
-    	my @vsfstat=split(/\s+/,$vsfline);
+    	my @vsfstat=split(/\s+/, $vsfline);
 	printf(" Detected volume %s (%s)\n", $vsfstat[2], $vsfstat[4]) if ($debug);
-	if (lc $vsfstat[7] ne "normal") {
-	    $status="CRITICAL";
+	$stat=lc($vsfstat[7]);
+	if ($stat ne "normal") {
+	    if ($stat eq "rebuilding" ) {
+		$status="WARNING";
+	    } elsif ($stat eq "verifying") {
+	    	$status="OK";
+	    } else {
+	    	$status="CRITICAL";
+	    }
 	    $info.=sprintf("Volume %s is %s\n", $vsfstat[2], $vsfstat[7]);
 	}
     }
 }
+close (VSF);
 
+if(defined($checkDisks)) {
+    # Check detailed disk data (optional as it makes check take longer)
+    my %diskstat=();
+    open (CLI, "$clipath disk info |") or die ("Can't open Areca CLI");
+    while ($dline=<CLI>) {
+	if ($dline=~m/ Disk\d/) {
+	    @dinfo=split(/\s+/, $dline);
+	    printf(" Detected disk %d (%s)\n", $dinfo[1], $dinfo[3]) if ($debug);
+	    push(@disks, $dinfo[1]);
+	}
+    }
+    close (CLI);
+}
 
 # The $perfValue variable can be set to some metric to be reported as
 # performance data (perfdata). If your plugin has no metrics to be
