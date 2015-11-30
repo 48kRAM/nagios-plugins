@@ -43,7 +43,7 @@ $PROGNAME="check_areca";
 # Enter the version number of your plugin here. Remember to
 # increment this version each time your release or commit it.
 # You can use integers or real numbers (x.y) as you please.
-$VERSION=2;
+$VERSION=3;
 
 # Your name - used in version output
 $AUTHOR_NAME='Josh Malone';
@@ -80,12 +80,11 @@ EOH
 # if your plugin logic works differently.
 $status='OK';
 
-# You can also define some default thresholds if there are logical defaults
-# for you application (disk usage at 90%, room temperature above 75F, etc.)
-# These will be overridden by values on the command line (parsed below).
+# Default disk temperature thresholds (in C)
 #
-# $warn = '80';
-# $crit = '90';
+$warn = 42;
+$crit = 50;
+
 $clipath='/usr/local/bin/cli32';
 
 # Series label for performance data output. Should reflect what is being
@@ -198,13 +197,27 @@ close (VSF);
 
 if(defined($checkDisks)) {
     # Check detailed disk data (optional as it makes check take longer)
-    my %diskstat=();
+    %diskstat=();
     open (CLI, "$clipath disk info |") or die ("Can't open Areca CLI");
     while ($dline=<CLI>) {
 	if ($dline=~m/ Disk\d/) {
 	    @dinfo=split(/\s+/, $dline);
 	    printf(" Detected disk %d (%s)\n", $dinfo[1], $dinfo[3]) if ($debug);
 	    push(@disks, $dinfo[1]);
+	    # Get detailed info for this disk
+	    open (DISK, "$clipath disk info drv=$dinfo[1] |") or die ("Can't run Areca CLI");
+	    while ($infoline=<DISK>) {
+		chomp($infoline);
+	    	if ($infoline=~m/Device Temperature/) {
+		    (my $disktemp = $infoline) =~ s/.*: //;
+		    ($disktemp, $tempunit) = split(' ', $disktemp);
+		    $diskstat{$dinfo[1]}{'temp'}=$disktemp;
+		    $diskstat{$dinfo[1]}{'tempunit'}=$tempunit;
+		    printf("Disk %d has temp %s%s\n", $dinfo[1],
+			$diskstat{$dinfo[1]}{'temp'}, $diskstat{$dinfo[1]}{'tempunit'} ) if ($debug);
+		}
+	    }
+	    close (DISK);
 	}
     }
     close (CLI);
@@ -225,20 +238,30 @@ if (!$info) {
 # ('OK', 'WARNING', 'CRITICAL' or 'UNKNOWN')
 $outstring="$status: $info";
 
-if(defined($perfValue)) {
+if(defined(%diskstat)) {
+    $perfString='|';
+    printf("Compiling performance data\n") if ($debug);
     # Compile the performance data. If threshold ranges are in use, format
     # the thresholds in perfdata range format as well.
+    foreach $disk (keys(%diskstat)) {
+	if(defined($critLow)) {
+	    $perfString.=sprintf(" Disk_%d=%d%s;%d;%d", $disk, $diskstat{$disk}{'temp'},
+	        $diskstat{$disk}{'tempunit'}, $warn, $crit);
+	} else {
+	    $perfString.=sprintf(" Disk_%d=%d%s;%d;%d", $disk, $diskstat{$disk}{'temp'},
+		$diskstat{$disk}{'tempunit'}, $warn, $crit);
+	}
+    }
     if(defined($critLow)) {
 	$perfWarnCrit=sprintf("%d:%d;%d:%d", $warnLow, $warn, $critLow, $crit);
     } else {
 	$perfWarnCrit=sprintf("%d;%d", $warn, $crit);
     }
-    $perfData=sprintf("|%s=%d%s;%s", $perfLabel, $perfValue, $perfUnit, $perfWarnCrit);
 }
 
-if(defined($perfValue)) {
+if(defined($perfString)) {
     # Concatenate the Screen Ouput and perfdata to stdout so that Nagios can grab it.
-    print "$outstring$perfData\n";
+    print "$outstring$perfString\n";
 } else {
     print "$outstring\n";
 }
