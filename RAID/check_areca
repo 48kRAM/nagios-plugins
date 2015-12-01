@@ -47,7 +47,7 @@ $PROGNAME="check_areca";
 # Enter the version number of your plugin here. Remember to
 # increment this version each time your release or commit it.
 # You can use integers or real numbers (x.y) as you please.
-$VERSION=3;
+$VERSION=4;
 
 # Your name - used in version output
 $AUTHOR_NAME='Josh Malone';
