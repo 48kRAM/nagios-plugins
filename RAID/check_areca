@@ -102,6 +102,12 @@ $crit = 50;
 $cpu_warn = 66;
 $cpu_crit = 75;
 
+# Battery unit thresholds. I'm unable to find clear documentation on what
+# these percentages mean. I'm assuming they represent a relative health of
+# the battery. If you know better, *PLESAE* send me docs.
+$battery_warn = 60;
+$battery_crit = 30;
+
 $clipath='/usr/local/bin/cli32';
 
 GetOptions(
@@ -151,7 +157,7 @@ while ($rsfline=<RSF>) {
 	printf(" Detected Raid set %s (%d disks)\n", $rsfstat[2], $rsfstat[3] ) if ($debug);
 	if( lc $rsfstat[7] ne "normal") {
 	    $status="CRITICAL";
-	    $info.=sprintf("RAID set %s is %s\n", $rsfstat[2], $rsfstat[7]);
+	    $info.=sprintf(" RAID set %s is %s\n", $rsfstat[2], $rsfstat[7]);
 	}
     }
 }
@@ -171,7 +177,7 @@ while ($vsfline=<VSF>) {
 	    } else {
 	    	$status="CRITICAL";
 	    }
-	    $info.=sprintf("Volume %s is %s\n", $vsfstat[2], $vsfstat[7]);
+	    $info.=sprintf(" Volume %s is %s\n", $vsfstat[2], $vsfstat[7]);
 	}
     }
 }
@@ -180,29 +186,40 @@ close (VSF);
 # Check controller hw info
 open (CLI, "$clipath hw info |") or die ("Can't query Area HW info");
 while ($hwline=<CLI>) {
-    if ($hwline=~m/CPU Temperature.*: (\d+) .*/) {
+    if ($hwline=~m/CPU Temperature.*: (\d+) .*/i) {
     	$cputemp = $1;
 	printf("CPU Temp is %d\n", $cputemp) if ($debug);
 	# Check thresholds
 	if ($cputemp > $cpu_crit) {
 	    $status='CRITICAL';
-	    $info.="Controller CPU temp is $cputemp C";
+	    $info.=" Controller CPU temp is $cputemp C";
 	} elsif ($cputemp > $cpu_warn) {
-	    if ($status ne 'CRITICAL') {
-	    	$status='WARNING';
-	    }
-	    $info.="Controller CPU temp is $cputemp C";
+	    $status='WARNING' if ($status ne 'CRITICAL');
+	    $info.=" Controller CPU temp is $cputemp C";
 	}
     }
     if ($hwline=~m/Controller Temp.*: (\d+) .*/) {
     	$ctrltemp = $1;
 	printf("Controller temp is %d\n", $ctrltemp) if ($debug);
     }
+    if ($hwline=~m/Battery Status.*(\d+)%/i) {
+	printf(" Detected battery backup unit\n") if ($debug);
+	$battery=$1;
+    	printf("Battery status is %d%\n", $battery) if ($debug);
+	if ($battery < $battery_crit) {
+	    $status='CRITICAL';
+	    $info.=" Battery status is $battery%";
+	} elsif ($battery < $battery_warn ) {
+	    $status='WARNING' if ($status ne 'CRITICAL');
+	    $info.=" Battery status is $battery%";
+	}
+    }
 }
 close (CLI);
 
 if(defined($checkDisks)) {
     # Check detailed disk data (optional as it makes check take longer)
+    printf(" Checking disks...\n") if ($debug);
     %diskstat=();
     open (CLI, "$clipath disk info |") or die ("Can't open Areca CLI");
     while ($dline=<CLI>) {
@@ -210,16 +227,25 @@ if(defined($checkDisks)) {
 	    @dinfo=split(/\s+/, $dline);
 	    printf(" Detected disk %d (%s)\n", $dinfo[1], $dinfo[3]) if ($debug);
 	    # Get detailed info for this disk
-	    open (DISK, "$clipath disk info drv=$dinfo[1] |") or die ("Can't run Areca CLI");
+	    $dnum=$dinfo[1];
+	    open (DISK, "$clipath disk info drv=$dnum |") or die ("Can't run Areca CLI");
 	    while ($infoline=<DISK>) {
 		chomp($infoline);
-	    	if ($infoline=~m/Device Temperature/) {
+		if ($infoline=~m/Device State .*: (.*)/i) {
+		    $diskstate=$1;
+		    printf("Disk %d is %s\n", $dnum, $diskstate) if ($debug);
+		    if (lc $diskstate ne 'normal') {
+		    	$status='CRITICAL';
+			$info.=" Disk $dnum is $diskstate";
+		    }
+		}
+	    	if ($infoline=~m/Device Temperature/i) {
 		    (my $disktemp = $infoline) =~ s/.*: //;
 		    ($disktemp, $tempunit) = split(' ', $disktemp);
 		    $diskstat{$dinfo[1]}{'temp'}=$disktemp;
 		    $diskstat{$dinfo[1]}{'tempunit'}=$tempunit;
-		    printf("Disk %d has temp %s%s\n", $dinfo[1],
-			$diskstat{$dinfo[1]}{'temp'}, $diskstat{$dinfo[1]}{'tempunit'} ) if ($debug);
+		    printf("Disk %d has temp %s%s\n", $dnum,
+			$diskstat{$dnum}{'temp'}, $diskstat{$dnum}{'tempunit'} ) if ($debug);
 		}
 	    }
 	    close (DISK);
@@ -229,20 +255,20 @@ if(defined($checkDisks)) {
 }
 
 if (!$info) {
-    $info="No problems detected by plugin";
+    $info=" No problems detected by plugin";
 }
 
 #############  End of your plugin logic  ##############
 
 # The Screen output should always begin with the readable status value
 # ('OK', 'WARNING', 'CRITICAL' or 'UNKNOWN')
-$outstring="$status: $info";
+$outstring="$status:$info";
 
 my $perfString="|";
 $perfString.=sprintf("CPU_Temp=%dC;%d;%d Controller_Temp=%dC", $cputemp, $cpu_warn, $cpu_crit,
     $ctrltemp);
 if(defined(%diskstat)) {
-    printf("Compiling performance data\n") if ($debug);
+    printf(" Compiling performance data\n") if ($debug);
     # Compile the performance data. If threshold ranges are in use, format
     # the thresholds in perfdata range format as well.
     foreach $disk (keys(%diskstat)) {
