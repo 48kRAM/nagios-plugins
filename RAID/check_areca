@@ -1,5 +1,6 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 # nagios: -epn
+# vim: set ai sw=4:
 #
 # Perl Nagios check plugin for Areca RAID
 #
@@ -32,6 +33,9 @@
 use lib qw ( . /usr/lib/nagios/libexec /usr/lib/nagios/plugins );
 use utils qw(%ERRORS);
 
+# Enable warnings for cleaner coding
+use warnings;
+
 # Uncomment this line to use the Net::SNMP library
 #use Net::SNMP;
 use Getopt::Long qw(:config no_ignore_case);
@@ -63,10 +67,17 @@ sub print_help () {
 Usage: $PROGNAME [options]
 
     -C, --cli-path	Full path to the Areca cli
+    -w, --warning	Disk temperature warning threshold (C)
+    -c, --critical	Disk temperature critical threshold (C)
+    --cpu-warn		CPU temperature warning threshold (C)
+    --cpu-crit		CPU temperature critical threshold (C)
     --check-disks	Perform deep check of disk status (longer run-time)
     -v, --verbose	Print verbose debugging output
     -V, --version	Print the plugin version and exit
     -h, --help		Print this help text
+
+Note: Temperature thresholds are upper thresholds only. Ranges
+      are not supported.
 
 EOH
     print ($help);
@@ -85,18 +96,21 @@ $status='OK';
 $warn = 42;
 $crit = 50;
 
-$clipath='/usr/local/bin/cli32';
+# Controller/CUP temp thresholds
+# Default thresholds based on my unit's current stats, and:
+#   http://christopher-technicalmusings.blogspot.com/2011/01/areca-1880ix-12-can-overheat-in-dell.html
+$cpu_warn = 66;
+$cpu_crit = 75;
 
-# Series label for performance data output. Should reflect what is being
-# measured in the perfdata as it will be shown in the graphs
-$perfLabel='label';
-$perfUnit='suffix';
+$clipath='/usr/local/bin/cli32';
 
 GetOptions(
     "C|cli-path"	=> \$clipath,
     "check-disks"	=> \$checkDisks,
     "w|warning=s"	=> \$warn,
     "c|critical=s"	=> \$crit,
+    "cpu-warn=i"	=> \$cpu_warn,
+    "cpu-crit=i"	=> \$cpu_crit,
     "v|verbose"		=> \$debug,
     "V|version"		=> \$doVersion,
     "h|help"		=> \$helpMe,
@@ -111,50 +125,18 @@ if ($helpMe) {
     print_help();
 }
 
-### Parse threshold ranges in Nagios range syntax.
-# https://nagios-plugins.org/doc/guidelines.html#THRESHOLDFORMAT
-#
-# Currently, this template only supports "outside the range" syntax
-# and does not support the use of ~ for infinity. To-do!
-@Warn=split(':', $warn) if (defined($warn));
-@Crit=split(':', $crit) if (defined($crit));
-if(scalar(@Warn) > 1) {
-    printf("Checking low and high warning thresholds\n") if ($debug);
-    ($warnLow, $warn)=@Warn;
-}
-if(scalar(@Crit) > 1) {
-    printf("Checking low and high critical thresholds\n") if ($debug);
-    ($critLow, $crit)=@Crit;
-}
 if(defined ($warn) && $debug) {
-    printf("Thresholds in use: W->%d:%d , C->%d:%d\n", $warnLow, $warn, $critLow, $crit);
+    no warnings 'uninitialized';
+    printf("Thresholds in use: Disk_Warn->%d , Disk_Crit->%d\n", $warn, $crit);
 }
 
 ##########  Write your plugin logic below this line  #############
-
-=pod
-
-Your plugin should now do it's work to perfom some check and compare
-the state of some service or metric to the warning and critical
-thresholds. If your check does not use numeric thresholds, then the
-$warn and $crit values can jus be ignored in the template.
-
-Your check logic should set the following variables:
-
-  $status = The textual status of the service (OK, WARNING, etc.)
-  $info = Additional info about the state of the service - used
-          in the Screen output
-
-You *MUST* place your code outside the =pod and =cut lines so that
-Perl actually runs the code for your service check.
-
-=cut
 
 $status="OK";
 $info="";
 
 # Set alarm to time out possibly hung Areca cli command
-# alarm 40;
+alarm 40;
 $SIG{ALRM} = sub {
     print "UNKNOWN: Plugin timed out - possibly a hung Areca cli command\n";
     exit $ERRORS{'UNKNOWN'};
@@ -195,6 +177,30 @@ while ($vsfline=<VSF>) {
 }
 close (VSF);
 
+# Check controller hw info
+open (CLI, "$clipath hw info |") or die ("Can't query Area HW info");
+while ($hwline=<CLI>) {
+    if ($hwline=~m/CPU Temperature.*: (\d+) .*/) {
+    	$cputemp = $1;
+	printf("CPU Temp is %d\n", $cputemp) if ($debug);
+	# Check thresholds
+	if ($cputemp > $cpu_crit) {
+	    $status='CRITICAL';
+	    $info.="Controller CPU temp is $cputemp C";
+	} elsif ($cputemp > $cpu_warn) {
+	    if ($status ne 'CRITICAL') {
+	    	$status='WARNING';
+	    }
+	    $info.="Controller CPU temp is $cputemp C";
+	}
+    }
+    if ($hwline=~m/Controller Temp.*: (\d+) .*/) {
+    	$ctrltemp = $1;
+	printf("Controller temp is %d\n", $ctrltemp) if ($debug);
+    }
+}
+close (CLI);
+
 if(defined($checkDisks)) {
     # Check detailed disk data (optional as it makes check take longer)
     %diskstat=();
@@ -203,7 +209,6 @@ if(defined($checkDisks)) {
 	if ($dline=~m/ Disk\d/) {
 	    @dinfo=split(/\s+/, $dline);
 	    printf(" Detected disk %d (%s)\n", $dinfo[1], $dinfo[3]) if ($debug);
-	    push(@disks, $dinfo[1]);
 	    # Get detailed info for this disk
 	    open (DISK, "$clipath disk info drv=$dinfo[1] |") or die ("Can't run Areca CLI");
 	    while ($infoline=<DISK>) {
@@ -223,11 +228,6 @@ if(defined($checkDisks)) {
     close (CLI);
 }
 
-# The $perfValue variable can be set to some metric to be reported as
-# performance data (perfdata). If your plugin has no metrics to be
-# reported, leave $perfValue undefined
-#
-# $perfValue=42;
 if (!$info) {
     $info="No problems detected by plugin";
 }
@@ -238,8 +238,10 @@ if (!$info) {
 # ('OK', 'WARNING', 'CRITICAL' or 'UNKNOWN')
 $outstring="$status: $info";
 
+my $perfString="|";
+$perfString.=sprintf("CPU_Temp=%dC;%d;%d Controller_Temp=%dC", $cputemp, $cpu_warn, $cpu_crit,
+    $ctrltemp);
 if(defined(%diskstat)) {
-    $perfString='|';
     printf("Compiling performance data\n") if ($debug);
     # Compile the performance data. If threshold ranges are in use, format
     # the thresholds in perfdata range format as well.
