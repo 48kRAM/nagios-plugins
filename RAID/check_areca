@@ -72,6 +72,7 @@ Usage: $PROGNAME [options]
     --cpu-warn		CPU temperature warning threshold (C)
     --cpu-crit		CPU temperature critical threshold (C)
     --check-disks	Perform deep check of disk status (longer run-time)
+    --timeout		Change default plugin timeout (default 40 sec)
     -v, --verbose	Print verbose debugging output
     -V, --version	Print the plugin version and exit
     -h, --help		Print this help text
@@ -110,13 +111,16 @@ $battery_crit = 30;
 
 $clipath='/usr/local/bin/cli32';
 
+$alarm_timeout=40;
+
 GetOptions(
-    "C|cli-path"	=> \$clipath,
+    "C|cli-path=s"	=> \$clipath,
     "check-disks"	=> \$checkDisks,
     "w|warning=s"	=> \$warn,
     "c|critical=s"	=> \$crit,
     "cpu-warn=i"	=> \$cpu_warn,
     "cpu-crit=i"	=> \$cpu_crit,
+    "timeout=i"		=> \$alarm_timeout,
     "v|verbose"		=> \$debug,
     "V|version"		=> \$doVersion,
     "h|help"		=> \$helpMe,
@@ -136,16 +140,22 @@ if(defined ($warn) && $debug) {
     printf("Thresholds in use: Disk_Warn->%d , Disk_Crit->%d\n", $warn, $crit);
 }
 
+sub trim {
+    my ($str, $start, $end) = @_;
+    $ret=substr($str, $start, $end-$start);
+    $ret=~s/^\s+|\s+$//g;
+    return ($ret);
+}
 ##########  Write your plugin logic below this line  #############
 
 $status="OK";
 $info="";
 
 # Set alarm to time out possibly hung Areca cli command
-alarm 40;
+alarm $alarm_timeout;
 $SIG{ALRM} = sub {
-    print "UNKNOWN: Plugin timed out - possibly a hung Areca cli command\n";
-    exit $ERRORS{'UNKNOWN'};
+    print "WARNING: Plugin timed out - possibly a hung Areca cli command\n";
+    exit $ERRORS{'WARNING'};
 };
 
 # Check RAID sets
@@ -153,11 +163,15 @@ open (RSF, "$clipath rsf info |") or die ("Can't open areca CLI");
 while ($rsfline=<RSF>) {
     if ($rsfline=~m/^ \d/) {
     	# RAID set line
+	chomp($rsfline);
 	my @rsfstat=split(/\s+/, $rsfline);
-	printf(" Detected Raid set %s (%d disks)\n", $rsfstat[2], $rsfstat[3] ) if ($debug);
-	if( lc $rsfstat[7] ne "normal") {
+	my $raidname=trim($rsfline, 4, 21);
+	my $numdisks=trim($rsfline, 22, 26);
+	my $rstatus=$rsfstat[$#rsfstat];
+	printf(" Detected Raid set %s (%d disks)\n", $raidname, $numdisks ) if ($debug);
+	if( lc $rstatus ne "normal") {
 	    $status="CRITICAL";
-	    $info.=sprintf(" RAID set %s is %s\n", $rsfstat[2], $rsfstat[7]);
+	    $info.=sprintf(" RAID set %s is %s\n", $raidname, $rstatus);
 	}
     }
 }
@@ -166,18 +180,21 @@ close(RSF);
 open (VSF, "$clipath vsf info |") or die ("Can't open Areca CLI");
 while ($vsfline=<VSF>) {
     if($vsfline=~m/^ *\d/) {
+	chomp($vsfline);
     	my @vsfstat=split(/\s+/, $vsfline);
-	printf(" Detected volume %s (%s)\n", $vsfstat[2], $vsfstat[4]) if ($debug);
-	$stat=lc($vsfstat[7]);
-	if ($stat ne "normal") {
-	    if ($stat eq "rebuilding" ) {
+	my $volname=trim($vsfline, 4, 21);
+	my $level=trim($vsfline, 37, 42);
+	my $vstatus=$vsfstat[$#vsfstat];
+	printf(" Detected volume %s (%s)\n", $volname, $level) if ($debug);
+	if (lc $vstatus ne "normal") {
+	    if ($vstatus eq "rebuilding" ) {
 		$status="WARNING";
-	    } elsif ($stat eq "verifying") {
+	    } elsif ($vstatus eq "verifying") {
 	    	$status="OK";
 	    } else {
 	    	$status="CRITICAL";
 	    }
-	    $info.=sprintf(" Volume %s is %s\n", $vsfstat[2], $vsfstat[7]);
+	    $info.=sprintf(" Volume %s is %s\n", $volname, $vstatus);
 	}
     }
 }
@@ -223,7 +240,8 @@ if(defined($checkDisks)) {
     %diskstat=();
     open (CLI, "$clipath disk info |") or die ("Can't open Areca CLI");
     while ($dline=<CLI>) {
-	if ($dline=~m/ Disk\d/) {
+	if ($dline=~m/^\s+\d+/) {
+	    next if ($dline=~m/N\.A\..*N\.A\./);
 	    @dinfo=split(/\s+/, $dline);
 	    printf(" Detected disk %d (%s)\n", $dinfo[1], $dinfo[3]) if ($debug);
 	    # Get detailed info for this disk
@@ -269,21 +287,10 @@ $perfString.=sprintf("CPU_Temp=%dC;%d;%d Controller_Temp=%dC", $cputemp, $cpu_wa
     $ctrltemp);
 if(defined(%diskstat)) {
     printf(" Compiling performance data\n") if ($debug);
-    # Compile the performance data. If threshold ranges are in use, format
-    # the thresholds in perfdata range format as well.
+    # Compile the performance data string with thresholds
     foreach $disk (keys(%diskstat)) {
-	if(defined($critLow)) {
-	    $perfString.=sprintf(" Disk_%d=%d%s;%d;%d", $disk, $diskstat{$disk}{'temp'},
-	        $diskstat{$disk}{'tempunit'}, $warn, $crit);
-	} else {
-	    $perfString.=sprintf(" Disk_%d=%d%s;%d;%d", $disk, $diskstat{$disk}{'temp'},
-		$diskstat{$disk}{'tempunit'}, $warn, $crit);
-	}
-    }
-    if(defined($critLow)) {
-	$perfWarnCrit=sprintf("%d:%d;%d:%d", $warnLow, $warn, $critLow, $crit);
-    } else {
-	$perfWarnCrit=sprintf("%d;%d", $warn, $crit);
+	$perfString.=sprintf(" Disk_%d=%d%s;%d;%d", $disk, $diskstat{$disk}{'temp'},
+	    $diskstat{$disk}{'tempunit'}, $warn, $crit);
     }
 }
 

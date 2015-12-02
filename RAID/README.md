@@ -28,6 +28,7 @@ This plugin should run on most typical perl installations that provide:
     --cpu-warn          CPU temperature warning threshold (C)
     --cpu-crit          CPU temperature critical threshold (C)
     --check-disks       Perform deep check of disk status (longer run-time)
+    --timeout		Change default plugin timeout (default 40 sec)
     -v, --verbose       Print verbose debugging output
     -V, --version       Print the plugin version and exit
     -h, --help          Print this help text
