@@ -23,3 +23,11 @@ Checks integrated temperature probe on an APC networked Smart UPS or Symmetra (a
 ### APC/check_apc_runtime
 
 Checks estimated runtime on an APC networked Smart UPS, Symmetra, etc. Runtime is reported in minutes. Provides perfdata for graphing.
+
+### MySQL/check_mysql_rep
+
+Checks the replication status of a MySQL slave.
+
+### DNS/check_dns_data
+
+Check the data and zones served by a DNS server against known-good values.
