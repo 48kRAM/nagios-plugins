@@ -1,0 +1,176 @@
+#!/usr/bin/perl
+# nagios: -epn
+#
+# Nagios plugin to check the contents of a DNS zone
+#
+# This plugin will query a DNS server for a series of zones/records
+# and compare them to expected values or check for their existance.
+#
+#
+# Copyright 2015 Joshua Malone <jmalone@nrao.edu>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
+# These lines include the Nagios-provided exit code perl module.
+# You may need to adjust the location of your included lib directory.
+use lib qw ( . /usr/lib/nagios/libexec /usr/lib/nagios/plugins );
+use utils qw(%ERRORS);
+use Getopt::Long qw(:config no_ignore_case);
+use Net::DNS;
+
+$PROGNAME='check_dns_data';
+$VERSION=1;
+$AUTHOR_NAME='Josh Malone';
+$AUTHOR_INFO='https://github.com/48kRAM/nagios-plugins';
+
+$keys=1;  # Key usage enabled by default
+
+# Help function
+sub print_help() {
+    my $help = << "EOH";
+Usage: $PROGNAME -c <config file> [-H <host address>] [-v] [-V]
+
+    -H, --host          Hostname or IP address of host to check
+			If omitted, the system's default resolver will be used
+    -c, --config	Path to check configuration file
+    -v, --verbose       Print verbose debugging output
+    -V, --version       Print the plugin version and exit
+
+EOH
+    print ($help);
+    exit $ERRORS{'UNKNOWN'};
+}
+
+## Load the config file
+Getopt::Long::Configure ('bundling');
+GetOptions(
+    "c|config=s"	=> \$cfg_file,
+    "H|host=s"		=> \$nameserver,
+    "v|verbose+"	=> \$verbose,
+    "keys!"		=> \$keys,
+    "V|version"		=> \$doVersion,
+) or print_help();
+
+if ($doVersion) {
+    printf("%s by %s (%s) version %d\n", $PROGNAME, $AUTHOR_NAME,
+	$AUTHOR_INFO, $VERSION);
+}
+
+if ($verbose > 1) {
+    use Data::Dumper;
+}
+
+open (CFG, "<", $cfg_file) or do {
+    printf("Error: cannot open config file $cfg_file!\n");
+    exit $ERRORS{'UNKNOWN'};
+};
+
+%config=();
+while(<CFG>) {
+    chomp($_);
+    if (/^Check zone /) {
+	($zone = $_) =~ s/Check zone //;
+	${config}{$zone}{'checks'}=();
+    }
+    if (/^Use key / && $keys) {
+    	($key = $_) =~ s/Use key //;
+	$config{$zone}{'key'}=$key;
+    }
+    if (/^Record /) {
+	($rec = $_) =~ s/Record (.*) should.*/\1/;
+    	if (/should exist/) {
+	    ${config}{$zone}{'checks'}{$rec}='should exist';
+	}
+	if (/should be/) {
+	    ($ans = $_) =~ s/.*should be //;
+	    ${config}{$zone}{'checks'}{$rec}=$ans;
+	}
+    }
+}
+
+$status="OK";
+$info="";
+$r = new Net::DNS::Resolver();
+$r->nameservers($nameserver) if ($nameserver);
+
+foreach $zone (keys(%config)) {
+    printf("+ Zone '%s'\n", $zone) if ($verbose);
+    # Load the key
+    if (defined($config{$zone}{'key'}) ) {
+	$tsigkey=$config{$zone}{'key'};
+	$tsig = Net::DNS::RR->new($tsigkey);
+	$r->tsig($tsig);
+    } else {
+        $r->tsig(0);
+    }
+    # Check zone info
+    $reply = $r->query($zone, 'SOA');
+    if (!$reply) {
+    	$status="CRITICAL";
+	printf("Error: zone %s not found!\n", $zone) if ($verbose);
+	$info.="Zone $zone not found\n";
+	next;	# No point in checking records in a non-existant zone
+    }
+    while ( ($check, $ans) = each %{$config{$zone}{'checks'}} ) {
+	printf(" + Checking record '%s'\n", $check) if ($verbose);
+	$record=$check.'.'.$zone;
+	$reply = $r->query($record);
+
+	# Loop over all $rr's, get type and type=>; compare all answers with config'd answer
+	$correct=0;
+	if(!$reply) {
+	    $info.="Record $check does not exist\n";
+	} else {
+	    foreach $rr ($reply->answer) {
+		print Dumper $rr if ($verbose > 1);
+		if ($rr->type eq 'A') {
+		    $answer=$rr->address;
+		} elsif ($rr->type eq 'CNAME') {
+		    $answer=$rr->cname;
+		} else {
+		    printf("Warning: unsupported record type %s!\n", $rr->type);
+		}
+		if (!defined($answer)) {
+		    printf("ERROR: record '%s' not found!\n", $check);
+		    $info.="Record $check not found\n";
+		} else {
+		    if ($ans eq 'should exist' and $answer) {
+			# Simply check that the record exists
+			$correct=1;
+		    }
+		    if ($answer eq $ans ) {
+			$correct=1;
+		    }
+		}
+	    }
+	}
+	if ($correct != 1) {
+	    $status="WARNING" unless($status eq "CRITICAL");
+	    printf("Error: record %s is incorrect\n", $record) if ($verbose);
+	    $info.="Record $check.$zone is incorrect\n";
+	}
+    }
+}
+
+if (!$info) {
+    $info="All DNS records look okay\n";
+}
+printf("%s: %s", $status, $info);
+exit $ERRORS{$status};
