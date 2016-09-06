@@ -29,15 +29,16 @@ use lib qw ( . /usr/lib/nagios/libexec );
 use utils qw($TIMEOUT %ERRORS);
 
 use Getopt::Long qw(:config no_ignore_case);
+use DBI;
 
 $PROGNAME="check_mysql_rep";
-$VERSION=4;
+$VERSION=5;
 $AUTHOR_NAME='Josh Malone',
 $AUTHOR_INFO='https://github.com/48kRAM/nagios-plugins';
 
 ### Set some defaults
-$state=$ERRORS{'OK'};
-$outstr="OK: No replication errors";
+my $state='OK';
+my $outstr="No replication errors";
 
 # Default delay thresholds
 $warnsecs=10;
@@ -51,6 +52,9 @@ Options:
 
     -u | --user		MySQL username
     -p | --password	MySQL password
+    -d | --debug	Print debugging output
+    -v | --version	Print version info and exit
+    -D <db> | --database <db>	Check that <db> is being replicated
 
  (Options for Seconds Behind Master)
 
@@ -72,6 +76,7 @@ GetOptions(
     "c|critical=i"	=> \$critsecs,
     "d|debug"		=> \$debug,
     "v|version"		=> \$doVersion,
+    "D|database=s"	=> \@replicate_dbs
 );
 
 # Time out the check in Nagios's default timeout setting
@@ -93,45 +98,65 @@ if (! $hostname or ! $opt_u or ! $opt_p ) {
     exit $ERRORS{'UNKNOWN'};
 }
 
-if (! open (SQL, "/usr/bin/mysql -h $hostname -u $opt_u --password='$opt_p' -e 'SHOW SLAVE STATUS\\G' |")) {
-    printf("CRITICAL: Unable to connect to mysql server $hostname\n");
-    exit $ERRORS{'UNKNOWN'};
-}
-while (<SQL>) {
-    chomp();
-    if (/Last_Errno/) {
-	next if ($state>0);
-	($foo, $numerrs)=split(/:/);
-	$numerrs=~s/^\s+|\s+$//g;
-	if ($numerrs>0) {
-	    $outstr="CRITICAL: $numerrs replication errors";
-	    $state=$ERRORS{'CRITICAL'};
-	} elsif ($numerrs==0) {
-	    $outstr="OK: No replication errors";
-	    $state=$ERRORS{'OK'};
-	}
+my %dbi_attr = (RaiseError =>1, HandleError => \&abort_critical );
+
+$dsn="DBI:mysql:;host=$hostname;port=3306";
+$dbh=DBI->connect($dsn, $opt_u, $opt_p, \%dbi_attr);
+$sth = $dbh->prepare("SHOW SLAVE STATUS");
+$sth->execute();
+while ($ref = $sth->fetchrow_hashref() ) {
+
+    my $slave_state=$ref->{'Slave_IO_State'};
+    if ($slave_state eq '') {
+        $outstr=" Slave not running";
+	$state='CRITICAL';
     }
-    if (/Seconds_Behind_Master/) {
-    	($foo, $secs)=split(/:/);
-	$secs=~s/^\s+|\s+$//g;
-	if ($secs=~/^[0-9]+/) {
-	    if ($secs > $critsecs) {
-		$outstr="CRITICAL: Slave is $secs seconds behind master";
-	    	$state=$ERRORS{'CRITICAL'};
-	    } elsif ($secs > $warnsecs) {
-		$outstr="CRITICAL: Slave is $secs seconds behind master";
-	    	$state=$ERRORS{'WARNING'};
-	    }
-	} else {
-	    $outstr.=" Unable to read seconds behind master";
+    my $numerrs=$ref->{'Last_Errno'};
+
+    if ($numerrs>0) {
+	$outstr.=" $numerrs replication errors";
+	$state='CRITICAL';
+    }
+
+    my $secs=$ref->{'Seconds_Behind_Master'};
+    printf("Server is %d seconds behind master\n", $secs) if ($debug);
+    if ($secs=~/^[0-9]+/) {
+	if ($secs > $critsecs) {
+	    $outstr.=" Slave is $secs seconds behind master";
+	    $state=$ERRORS{'CRITICAL'};
+	} elsif ($secs > $warnsecs) {
+	    $outstr.=" Slave is $secs seconds behind master";
+	    $state=$ERRORS{'WARNING'};
+	}
+    } else {
+	$state="CRITICAL";
+	$outstr.=" Unable to read seconds behind master";
+    }
+
+    @replicated_dbs{split(/,/, $ref->{'Replicate_Do_DB'}) } = 1;
+}
+
+if (scalar(@replicate_dbs) > 0 ) {
+    printf("Checking for defined replicated databases...\n") if ($debug);
+    foreach my $check_db (@replicate_dbs) {
+	if (! $replicated_dbs{$check_db}) {
+	    $outstr.=" Database $check_db is not being replicated";
+	    $state='CRITICAL';
 	}
     }
 }
 
 # Add performance data
-if ($secs=~/[0-9]*/) {
+if ($secs=~/^[0-9]+/) {
     $outstr.=" |delay=".$secs."s";
 }
 
-print $outstr."\n";
-exit $state;
+printf ("%s: %s\n", $state, $outstr);
+exit $ERRORS{$state};
+
+#####################
+
+sub abort_critical {
+    print "CRITICAL: Unable to make mysql connection to $hostname!\n";
+    exit $ERRORS{'CRITICAL'};
+}
