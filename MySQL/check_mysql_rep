@@ -32,13 +32,14 @@ use Getopt::Long qw(:config no_ignore_case);
 use DBI;
 
 $PROGNAME="check_mysql_rep";
-$VERSION=5;
+$VERSION=7;
 $AUTHOR_NAME='Josh Malone',
 $AUTHOR_INFO='https://github.com/48kRAM/nagios-plugins';
 
 ### Set some defaults
 my $state='OK';
 my $outstr="No replication errors";
+my $sqlport=3306;
 
 # Default delay thresholds
 $warnsecs=10;
@@ -55,6 +56,7 @@ Options:
     -d | --debug	Print debugging output
     -v | --version	Print version info and exit
     -D <db> | --database <db>	Check that <db> is being replicated
+    -port <port>	Connect to MySQL on non-standard port
 
  (Options for Seconds Behind Master)
 
@@ -76,7 +78,8 @@ GetOptions(
     "c|critical=i"	=> \$critsecs,
     "d|debug"		=> \$debug,
     "v|version"		=> \$doVersion,
-    "D|database=s"	=> \@replicate_dbs
+    "D|database=s"	=> \@replicate_dbs,
+    "port=i"		=> \$sqlport
 );
 
 # Time out the check in Nagios's default timeout setting
@@ -100,8 +103,8 @@ if (! $hostname or ! $opt_u or ! $opt_p ) {
 
 my %dbi_attr = (RaiseError =>1, HandleError => \&abort_critical );
 
-$dsn="DBI:mysql:;host=$hostname;port=3306";
-$dbh=DBI->connect($dsn, $opt_u, $opt_p, \%dbi_attr);
+$dsn="DBI:mysql:;host=$hostname;port=$sqlport";
+our $dbh=DBI->connect($dsn, $opt_u, $opt_p, \%dbi_attr);
 $sth = $dbh->prepare("SHOW SLAVE STATUS");
 $sth->execute();
 while ($ref = $sth->fetchrow_hashref() ) {
@@ -135,6 +138,7 @@ while ($ref = $sth->fetchrow_hashref() ) {
 
     @replicated_dbs{split(/,/, $ref->{'Replicate_Do_DB'}) } = 1;
 }
+$dbh->disconnect;
 
 if (scalar(@replicate_dbs) > 0 ) {
     printf("Checking for defined replicated databases...\n") if ($debug);
@@ -158,5 +162,6 @@ exit $ERRORS{$state};
 
 sub abort_critical {
     print "CRITICAL: Unable to make mysql connection to $hostname!\n";
+    print $DBI::errstr ."\n";
     exit $ERRORS{'CRITICAL'};
 }
