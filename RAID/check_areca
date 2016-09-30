@@ -7,7 +7,7 @@
 # Created to work on a DDP-16D storage appliance running a very
 # old version of Debian and Areca CLI 1.13.0
 #
-# Copyright 2015 Joshua Malone <jmalone@nrao.edu>
+# Copyright 2016 Joshua Malone <jmalone@nrao.edu>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -47,7 +47,7 @@ $PROGNAME="check_areca";
 # Enter the version number of your plugin here. Remember to
 # increment this version each time your release or commit it.
 # You can use integers or real numbers (x.y) as you please.
-$VERSION=4;
+$VERSION=5;
 
 # Your name - used in version output
 $AUTHOR_NAME='Josh Malone';
@@ -170,8 +170,11 @@ while ($rsfline=<RSF>) {
 	my $rstatus=$rsfstat[$#rsfstat];
 	printf(" Detected Raid set %s (%d disks)\n", $raidname, $numdisks ) if ($debug);
 	if( lc $rstatus ne "normal") {
-	    $status="CRITICAL";
-	    $info.=sprintf(" RAID set %s is %s\n", $raidname, $rstatus);
+	    # Check for "checking" which is normal
+	    if ( ! $rstatus =~ /checking/i ) {
+		$status="CRITICAL";
+		$info.=sprintf(" RAID set %s is %s\n", $raidname, $rstatus);
+	    }
 	}
     }
 }
@@ -191,6 +194,8 @@ while ($vsfline=<VSF>) {
 		$status="WARNING";
 	    } elsif ($vstatus eq "verifying") {
 	    	$status="OK";
+	    } elsif ($vstatus =~ /checking/i ) {
+	        $status="OK";
 	    } else {
 	    	$status="CRITICAL";
 	    }
