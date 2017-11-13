@@ -30,7 +30,7 @@ use lib qw ( . /usr/lib/nagios/libexec /usr/lib/nagios/plugins );
 use utils qw(%ERRORS);
 
 $PROGNAME="check_ims_sensor";
-$VERSION=8;
+$VERSION=10;
 
 sub print_help () {
     my $help = << "EOH";
@@ -47,10 +47,30 @@ Usage: $PROGNAME -H <host address> [-C <community>] [-n <node>] -I <input> [(oth
     -t		Override input type string
 
     --list-sensors	List available sensors on selected node
+    --list-nodes	List connected nodes
 
 EOH
     print ($help);
     exit $ERRORS{'UNKNOWN'};
+}
+
+sub isNodeActive ($) {
+    $nodeNumber=shift @_;
+    if ($nodeNumber == 0) {
+	# Invalid node - this is the host
+	return 1;
+    }
+
+    my $nodeInUseObj="$ims4000.$nodeNumber.$suf_nodeActive";
+    $res = $s->get_request( -varbindlist => [ $nodeInUseObj ] );
+    if(!defined($res)) {
+	printf("Error retrieving node data: %s\n", $s->error);
+    }
+    if ($res->{$nodeInUseObj} == 2 ) { 
+	return 1;
+    } else {
+	return 0;
+    }
 }
 
 ### Set some defaults
@@ -60,6 +80,10 @@ $community="public";
 $ims4000=".1.3.6.1.4.1.8338.1.1.1";
 # For verifying SNMP connectivity
 $OIDuptime='.1.3.6.1.2.1.1.3.0';
+
+# OID suffix for node name
+$suf_nodeName='10.2.0';
+$suf_nodeActive='10.10.0';
 
 # The types of input sensors available
 %InputTypes = (
@@ -92,6 +116,7 @@ GetOptions(
     "t|type=s"		=> \$type,
     "V|version"		=> \$doVersion,
     "list-sensors"	=> \$doList,
+    "list-nodes"	=> \$doNodes,
 ) or print_help();
 
 if (!$ims || $helpme) {
@@ -128,6 +153,32 @@ if(!defined($res)) {
 ### Figure out the OID offset for the chosen node
 if ($node) {
     $OIDnode+=$node;
+}
+
+### List available nodes that the host knows about
+if($doNodes) {
+    printf("Available nodes:\n");
+    for ($i=1; $i<33; $i++) {
+	# Up to 31 nodes are supported, numbered 2 to 32 (1 is host)
+	printf("Querying node %d\n", $i) if ($debug);
+	my $nodeNameObj="$ims4000.$i.$suf_nodeName";
+	my $nodeInUseObj="$ims4000.$i.$suf_nodeActive";
+	$res = $s->get_request( -varbindlist => [ $nodeNameObj, $nodeInUseObj ] );
+	if(!defined($res)) {
+	    printf("Error retrieving node name: %s\n", $s->error);
+	}
+	if ($res->{$nodeInUseObj} == 2 ) { 
+	    printf("Node %d, name %s\n", $i-1, $res->{$nodeNameObj} );
+	}
+    }
+    exit $ERRORS{'UNKNOWN'};
+}
+
+# Check to see if node is active before any more activity
+$nodeActive=isNodeActive($node);
+if (!$nodeActive) {
+    printf("CRITICAL: Node %d is not active on this host!\n", $node);
+    exit $ERRORS{'CRITICAL'};
 }
 
 ### List available sensors if requested
