@@ -187,9 +187,11 @@ if($doList) {
     for ($i=1; $i<12; $i++) {
 	my $listType="$ims4000.$OIDnode.8.1.1.3.$i";
 	my $listLabel="$ims4000.$OIDnode.8.1.1.2.$i";
+	my $highLimOID="$ims4000.$OIDnode.8.1.1.14.$i";
+	my $lowLimOID="$ims4000.$OIDnode.8.1.1.13.$i";
 	printf("Sensor type OID is %s\n", $listType) if ($debug && $i==1);
 	$res = $s->get_request(
-	    -varbindlist => [ $listType, $listLabel ],
+	    -varbindlist => [ $listType, $listLabel, $highLimOID, $lowLimOID  ],
 	);
 	if(!defined($res)) {
 	    printf("Error retrieving sensor data:\n%s\nAre you querying the IMS *host*?\n",
@@ -200,12 +202,14 @@ if($doList) {
 	if($type==16) {
 	    printf("  Ch %d: Not connected\n", $i);
 	} else {
+	    my $imsLowAlarm=$res->{$lowLimOID};
+	    my $imsHighAlarm=$res->{$highLimOID};
 	    if ($debug) {
-		printf("  Ch %d: Type %s (%d), Name: %s\n", $i,
-		    $InputTypes{$res->{$listType}}, $res->{$listType}, $res->{$listLabel} );
+		printf("  Ch %d: Type %s (%d), Name: %s, Threshold: %d:%d\n", $i,
+		    $InputTypes{$res->{$listType}}, $res->{$listType}, $res->{$listLabel}, $imsLowAlarm, $imsHighAlarm );
 	    } else {
-		printf("  Ch %d: Type %s, Name: %s\n", $i,
-		    $InputTypes{$res->{$listType}}, $res->{$listLabel} );
+		printf("  Ch %d: Type %s, Name: %s, Threshold: %d:%d\n", $i,
+		    $InputTypes{$res->{$listType}}, $res->{$listLabel}, $imsLowAlarm, $imsHighAlarm );
 	    }
 	}
     }
@@ -238,10 +242,12 @@ $imsHighAlarm=$res->{$highLimOID};
 if(!$inLabel eq "" and !$type) {
     $type=$inLabel;
 }
-printf("Sensor type is %d\n", $inType) if ($debug);
-printf("Sensor label is %s\n", $inLabel) if ($debug);
-printf("Raw value is %s\n", $inputValue) if ($debug);
-printf("IMS config thresholds: %d:%d\n", $imsLowAlarm, $imsHighAlarm) if ($debug);
+if ($debug) {
+    printf("Sensor type is %d\n", $inType);
+    printf("Sensor label is %s\n", $inLabel);
+    printf("Raw value is %s\n", $inputValue);
+    printf("IMS config thresholds: %d:%d\n", $imsLowAlarm, $imsHighAlarm);
+}
 
 # Use alarm range configured in IMS if no thresholds supplied in arguments
 if(!defined($crit)) {
