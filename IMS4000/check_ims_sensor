@@ -30,7 +30,7 @@ use lib qw ( . /usr/lib/nagios/libexec /usr/lib/nagios/plugins );
 use utils qw(%ERRORS);
 
 $PROGNAME="check_ims_sensor";
-$VERSION=10;
+$VERSION=11;
 
 sub print_help () {
     my $help = << "EOH";
