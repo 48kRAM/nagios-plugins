@@ -36,7 +36,7 @@ use Getopt::Long qw(:config no_ignore_case);
 use Net::DNS;
 
 $PROGNAME='check_dns_data';
-$VERSION=2;
+$VERSION=3;
 $AUTHOR_NAME='Josh Malone';
 $AUTHOR_INFO='https://github.com/48kRAM/nagios-plugins';
 
@@ -50,7 +50,7 @@ Usage: $PROGNAME -c <config file> [-H <host address>] [-v] [-V]
     -H, --host          Hostname or IP address of host to check
 			If omitted, the system's default resolver will be used
     -c, --config	Path to check configuration file
-    -v, --verbose       Print verbose debugging output
+    -v, --verbose       Print verbose debugging output (use again for more info)
     -V, --version       Print the plugin version and exit
 
 EOH
@@ -89,26 +89,26 @@ while(<CFG>) {
     $zonenumber++;
     chomp($_);
     if (/^Check zone /) {
-	($zone = $_) =~ s/Check zone //;
-	$zoneid=$zone.'-'.$zonenumber;
-	printf("Need to check zone %s\n", $zone) if ($verbose>2);
-	${config}{$zoneid}{'zone'}=$zone;
-	${config}{$zoneid}{'checks'}=();
+        ($zone = $_) =~ s/Check zone //;
+        $zoneid=$zone.'-'.$zonenumber;
+        printf("Need to check zone %s\n", $zone) if ($verbose>2);
+        ${config}{$zoneid}{'zone'}=$zone;
+        ${config}{$zoneid}{'checks'}=();
     }
     if (/^Use key / && $keys) {
     	($key = $_) =~ s/Use key //;
-	$config{$zoneid}{'key'}=$key;
+        $config{$zoneid}{'key'}=$key;
     }
     if (/^Record /) {
-	($rec = $_) =~ s/Record (.*) should.*/\1/;
-	printf("  Check record %s\n", $rec) if ($verbose>2);
-    	if (/should exist/) {
-	    ${config}{$zoneid}{'checks'}{$rec}='should exist';
-	}
-	if (/should be/) {
-	    ($ans = $_) =~ s/.*should be //;
-	    ${config}{$zoneid}{'checks'}{$rec}=$ans;
-	}
+        ($rec = $_) =~ s/Record (.*) should.*/\1/;
+        printf("  Check record %s\n", $rec) if ($verbose>2);
+            if (/should exist/) {
+            ${config}{$zoneid}{'checks'}{$rec}='should exist';
+        }
+        if (/should be/) {
+            ($ans = $_) =~ s/.*should be //;
+            ${config}{$zoneid}{'checks'}{$rec}=$ans;
+        }
     }
 }
 
@@ -120,67 +120,70 @@ if ($verbose >2) {
 $status="OK";
 $info="";
 $r = new Net::DNS::Resolver();
+$r->debug(1) if ($verbose > 2);
 $r->nameservers($nameserver) if ($nameserver);
 
 foreach $zoneid (keys(%config)) {
+    my @keyparts;
     $zone = $config{$zoneid}{'zone'};
     printf("+ Zone '%s'", $zone) if ($verbose);
     # Load the key
     if (defined($config{$zoneid}{'key'}) ) {
-	$tsigkey=$config{$zoneid}{'key'};
-	$tsig = Net::DNS::RR->new($tsigkey);
-	$r->tsig($tsig);
-	printf(" with key %s\n", $tsigkey) if ($verbose);
+        @keyparts = split(' ',$tsigkey=$config{$zoneid}{'key'});
+        printf(" with key %s\n", $keyparts[0]) if ($verbose);
     } else {
-        $r->tsig(0);
-	printf("\n") if ($verbose);
+        undef @keyparts;
+        printf("\n") if ($verbose);
     }
     # Check zone info
     $reply = $r->query($zone, 'SOA');
     if (!$reply) {
     	$status="CRITICAL";
-	printf("Error: zone %s not found!\n", $zone) if ($verbose);
-	$info.="Zone $zone not found\n";
-	next;	# No point in checking records in a non-existant zone
+        printf("Error: zone %s not found!\n", $zone) if ($verbose);
+        $info.="Zone $zone not found\n";
+        next;	# No point in checking records in a non-existant zone
     }
     while ( ($check, $ans) = each %{$config{$zoneid}{'checks'}} ) {
-	printf(" + Checking record '%s'\n", $check) if ($verbose);
-	$record=$check.'.'.$zone;
-	$reply = $r->query($record);
+        printf(" + Checking record '%s'\n", $check) if ($verbose);
+        $record=$check.'.'.$zone;
+        if (@keyparts) {
+            $r->tsig($keyparts[0],$keyparts[2]);
+        }
+        $reply = $r->query($record);
 
-	# Loop over all $rr's, get type and type=>; compare all answers with config'd answer
-	$correct=0;
-	if(!$reply) {
-	    $info.="Record $check does not exist\n";
-	} else {
-	    foreach $rr ($reply->answer) {
-		print Dumper $rr if ($verbose > 1);
-		if ($rr->type eq 'A') {
-		    $answer=$rr->address;
-		} elsif ($rr->type eq 'CNAME') {
-		    $answer=$rr->cname;
-		} else {
-		    printf("Warning: unsupported record type %s!\n", $rr->type);
-		}
-		if (!defined($answer)) {
-		    printf("ERROR: record '%s' not found!\n", $check);
-		    $info.="Record $check not found\n";
-		} else {
-		    if ($ans eq 'should exist' and $answer) {
-			# Simply check that the record exists
-			$correct=1;
-		    }
-		    if ($answer eq $ans ) {
-			$correct=1;
-		    }
-		}
-	    }
-	}
-	if ($correct != 1) {
-	    $status="WARNING" unless($status eq "CRITICAL");
-	    printf("Error: record %s is incorrect\n", $record) if ($verbose);
-	    $info.="Record $check.$zone is incorrect\n";
-	}
+        # Loop over all $rr's, get type and type=>; compare all answers with config'd answer
+        $correct=0;
+        if(!$reply) {
+            $info.="Record $check does not exist\n";
+        } else {
+            foreach $rr ($reply->answer) {
+                print Dumper $rr if ($verbose > 1);
+                if ($rr->type eq 'A') {
+                    $answer=$rr->address;
+                } elsif ($rr->type eq 'CNAME') {
+                    $answer=$rr->cname;
+                } else {
+                    printf("Warning: unsupported record type %s!\n", $rr->type);
+                }
+                if (!defined($answer)) {
+                    printf("ERROR: record '%s' not found!\n", $check);
+                    $info.="Record $check not found\n";
+                } else {
+                    if ($ans eq 'should exist' and $answer) {
+                    # Simply check that the record exists
+                    $correct=1;
+                    }
+                    if ($answer eq $ans ) {
+                    $correct=1;
+                    }
+                }
+            }
+        }
+        if ($correct != 1) {
+            $status="WARNING" unless($status eq "CRITICAL");
+            printf("Error: record %s is incorrect\n", $record) if ($verbose);
+            $info.="Record $check.$zone is incorrect\n";
+        }
     }
 }
 
