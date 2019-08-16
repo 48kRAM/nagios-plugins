@@ -7,7 +7,7 @@
 # and compare them to expected values or check for their existance.
 #
 #
-# Copyright 2015 Joshua Malone <jmalone@nrao.edu>
+# Copyright 2019 Joshua Malone <jmalone@nrao.edu>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -36,7 +36,7 @@ use Getopt::Long qw(:config no_ignore_case);
 use Net::DNS;
 
 $PROGNAME='check_dns_data';
-$VERSION=4;
+$VERSION=6;
 $AUTHOR_NAME='Josh Malone';
 $AUTHOR_INFO='https://github.com/48kRAM/nagios-plugins';
 
@@ -50,6 +50,7 @@ Usage: $PROGNAME -c <config file> [-H <host address>] [-v] [-V]
     -H, --host          Hostname or IP address of host to check
 			If omitted, the system's default resolver will be used
     -c, --config	Path to check configuration file
+    -t, --timeout       Query timeout (in second; defaults to 3)
     -v, --verbose       Print verbose debugging output (use again for more info)
     -V, --version       Print the plugin version and exit
 
@@ -58,11 +59,13 @@ EOH
     exit $ERRORS{'UNKNOWN'};
 }
 
+my $timeout=3;
 ## Load the config file
 Getopt::Long::Configure ('bundling');
 GetOptions(
     "c|config=s"	=> \$cfg_file,
     "H|host=s"		=> \$nameserver,
+    "t|timeout=i"       => \$timeout,
     "v|verbose+"	=> \$verbose,
     "keys!"		=> \$keys,
     "V|version"		=> \$doVersion,
@@ -81,6 +84,8 @@ open (CFG, "<", $cfg_file) or do {
     printf("Error: cannot open config file $cfg_file!\n");
     exit $ERRORS{'UNKNOWN'};
 };
+
+printf("Querying server: %s\n", $nameserver) if ($verbose);
 
 # Read the config file
 %config=();
@@ -101,8 +106,8 @@ while(<CFG>) {
     }
     if (/^Record /) {
         ($rec = $_) =~ s/Record (.*) should.*/\1/;
-        printf("  Check record %s\n", $rec) if ($verbose>2);
-            if (/should exist/) {
+        printf("  Need to check record %s\n", $rec) if ($verbose>1);
+	if (/should exist/) {
             ${config}{$zoneid}{'checks'}{$rec}='should exist';
         }
         if (/should be/) {
@@ -119,13 +124,15 @@ if ($verbose >2) {
 # Run the checks as configured
 $status="OK";
 $info="";
-$r = new Net::DNS::Resolver();
-$r->debug(1) if ($verbose > 2);
-$r->nameservers($nameserver) if ($nameserver);
 
 foreach $zoneid (keys(%config)) {
     my @keyparts;
-    $r->tsig(undef);
+    my $r = new Net::DNS::Resolver();
+    $r->tcp_timeout($timeout);
+    $r->udp_timeout($timeout);
+    $r->debug(1) if ($verbose > 2);
+    $r->nameservers($nameserver) if ($nameserver);
+
     $zone = $config{$zoneid}{'zone'};
     printf("+ Zone '%s'", $zone) if ($verbose);
     # Load the key
@@ -137,6 +144,7 @@ foreach $zoneid (keys(%config)) {
         printf("\n") if ($verbose);
     }
     # Check zone info
+    printf("Checking zone SOA for %s\n", $zone) if ($verbose >1);
     $reply = $r->query($zone, 'SOA');
     if (!$reply) {
     	$status="CRITICAL";
@@ -144,10 +152,13 @@ foreach $zoneid (keys(%config)) {
         $info.="Zone $zone not found\n";
         next;	# No point in checking records in a non-existant zone
     }
-    while ( ($check, $ans) = each %{$config{$zoneid}{'checks'}} ) {
-        printf(" + Checking record '%s'\n", $check) if ($verbose);
+    while ( ($check, $expect) = each %{$config{$zoneid}{'checks'}} ) {
+        printf("+ Checking record '%s'\n", $check) if ($verbose);
+        # Trim trailing dot, which is legal but not returned in the record
+        $expect=~s/\.$//;
         $record=$check.'.'.$zone;
         if (@keyparts) {
+	    printf("Info: Assigning key %s to query\n", $keyparts[0]) if ($verbose > 1);
             $r->tsig($keyparts[0],$keyparts[2]);
         }
         $reply = $r->query($record);
@@ -155,10 +166,9 @@ foreach $zoneid (keys(%config)) {
         # Loop over all $rr's, get type and type=>; compare all answers with config'd answer
         $correct=0;
         if(!$reply) {
-            $info.="Record $check does not exist\n";
+            $info.="Record $record does not exist\n";
         } else {
             foreach $rr ($reply->answer) {
-                #print Dumper $rr if ($verbose > 1);
                 if ($rr->type eq 'A') {
                     $answer=$rr->address;
                 } elsif ($rr->type eq 'CNAME') {
@@ -170,12 +180,12 @@ foreach $zoneid (keys(%config)) {
                     printf("ERROR: record '%s' not found!\n", $check);
                     $info.="Record $check not found\n";
                 } else {
-                    if ($ans eq 'should exist' and $answer) {
-                    # Simply check that the record exists
-                    $correct=1;
+                    if ($expect eq 'should exist' and $answer) {
+                        # Simply check that the record exists
+                        $correct=1;
                     }
-                    if ($answer eq $ans ) {
-                    $correct=1;
+                    if ($answer eq $expect ) {
+                        $correct=1;
                     }
                 }
             }
@@ -186,6 +196,7 @@ foreach $zoneid (keys(%config)) {
             $info.="Record $check.$zone is incorrect\n";
         }
     }
+    undef $r;
 }
 
 if (!$info) {
