@@ -3,7 +3,7 @@
 #
 # Nagios plugin to monitor the runtime on an APC Smart UPS
 #
-# Copyright 2015 Joshua Malone <jmalone@nrao.edu>
+# Copyright 2021 Joshua Malone <jmalone@nrao.edu>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -39,7 +39,7 @@ Usage: $PROGNAME -H <host address> [-C <community>] [(other options)]
 
 Report power consuption on an APC networked UPS
 
-    -H		Host address (\$HOSTADDRESS\$ in Nagios)
+    -H          Host address (\$HOSTADDRESS\$ in Nagios)
     -C          SNMP community string (read is sufficient)
     -w          Warning threshold (supports Nagios range syntax)
     -c          Critical threshold (supports Nagios range syntax)
