@@ -1,0 +1,156 @@
+#!/usr/bin/perl
+# nagios: -epn
+#
+# Nagios plugin to monitor the runtime on an APC Smart UPS
+#
+# Copyright 2015 Joshua Malone <jmalone@nrao.edu>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+use Net::SNMP qw (ticks_to_time);
+use Getopt::Long qw(:config no_ignore_case);
+use lib qw ( . /usr/lib/nagios/libexec /usr/lib/nagios/plugins );
+use utils qw(%ERRORS);
+
+use Data::Dumper;
+
+$PROGNAME='check_apc_power';
+$VERSION=1;
+
+sub print_help () {
+    my $help = << "EOH";
+Usage: $PROGNAME -H <host address> [-C <community>] [(other options)]
+
+Report power consuption on an APC networked UPS
+
+    -H		Host address (\$HOSTADDRESS\$ in Nagios)
+    -C          SNMP community string (read is sufficient)
+    -w          Warning threshold (supports Nagios range syntax)
+    -c          Critical threshold (supports Nagios range syntax)
+
+EOH
+    print ($help);
+    exit $ERRORS{'UNKNOWN'};
+}
+
+### Set some defaults
+$community="public";
+$perfLabel="kW";
+$probe=1;
+$numPhases=3;
+
+GetOptions(
+    "H|host=s"          => \$host,
+    "h|help"            => \$helpme,
+    "C|community=s"     => \$community,
+    "w|warning=s"       => \$warn,
+    "c|critical=s"      => \$crit,
+    "v|verbose+"         => \$debug,
+    "p|probe=i"		    => \$probe,
+    "V|version"		    => \$doVersion,
+) or print_help();
+
+if (!$host || !defined($warn) || !defined($crit) || $helpme) {
+    print_help();
+}
+if ($doVersion) {
+    printf("%s by Josh Malone (jmalone at nrao.edu) version %d\n", $PROGNAME, $VERSION);
+    exit $ERRORS{'UNKNOWN'};
+}
+if($warn=~/:/ or $crit=~/:/) {
+    printf("Error: Threshold ranges not supported!\n");
+    exit $ERRORS{'UNKNOWN'};
+}
+if($warn >= $crit) {
+    printf("Error: Warning threshold must be lower than critical threshold!\n");
+    exit $ERRORS{'UNKNOWN'};
+}
+printf("Thresholds in use: W->%d, C->%d\n", $warn,$crit) if($debug);
+
+%tempSystem = ( 0 => 'F', 1 => 'C' );
+
+$powernet=".1.3.6.1.4.1.318";
+$hwOID="$powernet.1.1";
+$batteryOID="$hwOID.1.2.2";
+$runtimeOID="$batteryOID.3.0";
+$chargeOID="$batteryOID.1.0";
+
+$ups="$powernet.1.1.1";
+$upsInputCurrent="$ups.9.2.3.1.6.1.1";
+$upsInputVoltage="$ups.9.2.3.1.3.1.1";
+
+($s, $error) = Net::SNMP->session(
+        -hostname => $host, -community => $community, -timeout => 10,
+	-version => 1, -translate => [ -timeticks => 0x0 ]
+) or die ("Unable to create new SNMP session");
+if ($error) {
+    printf("Session error: %s\n", $error);
+    exit $ERRORS{'UNKNOWN'};
+}
+
+# Number of phases
+@getValues=();
+for (my $x=1; $x<= $numPhases; $x++) {
+    push (@getValues, "$upsInputCurrent.$x");
+    push (@getValues, "$upsInputVoltage.$x");
+}
+
+### Request the sensor type and value
+$res = $s->get_request( -varbindlist => \@getValues );
+if(!defined($res)) {
+    printf("CRITICAL: SNMP error: %s\n", $s->error);
+    exit $ERRORS{'CRITICAL'};
+}
+
+my $kW=0;
+for (my $x=1; $x<=$numPhases; $x++) {
+    my $inAmps=$res->{"$upsInputCurrent.$x"};
+    my $inVolts=$res->{"$upsInputVoltage.$x"};
+    printf(" (Phase %d: %d volts %d amps)\n", $x, $inVolts, $inAmps) if ($debug>1);
+    $kW+=$inVolts * $inAmps/10000;
+}
+
+#printf("Power is %.1fkW\n", $kW);
+
+### Process the value
+$status="OK";
+
+# NOTE: High thresholds do not make sense when checking UPS runtime. 
+#	Warning and Critical thresholds are assumed to be lower
+#	thresholds. Do not use this plugin to check for low UPS load --
+#	use a load check plugin instead.
+
+
+if ($kW >= $warn) {
+    $status="WARNING";
+}
+if ($kW >= $crit) {
+    $status="CRITICAL";
+}
+
+$outstring=sprintf("%s: Power consumption is %.1f kW", $status, $kW);
+if(defined($warnLow)) {
+    $perfWarnCrit=sprintf("%d:%d;%d:%d", $warnLow, $warn, $critLow, $crit);
+} else {
+    $perfWarnCrit=sprintf("%d;%d", $warn, $crit);
+}
+$perfData=sprintf("|%s=%.1fkW;%s", $perfLabel, $kW, $perfWarnCrit);
+print "$outstring$perfData\n";
+
+exit $ERRORS{$status};
